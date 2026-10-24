@@ -1,0 +1,12 @@
+# Build trees and products (install.sh build, cmake --preset default)
+/build/
+/build-*/
+/bin/
+# Written by install.sh build: the absolute ORION/FiNeR paths of this checkout
+/CMakePresets.json
+# A hand run of a test case writes these next to its input.ini
+/test/driver/*/INPUT/
+/test/driver/*/OUTPUT/
+/test/driver/*/input.ini
+# Python's byte code, should a script be imported by hand
+__pycache__/
