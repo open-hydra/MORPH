@@ -217,9 +217,9 @@ for guard in "${GUARDS[@]}"; do
   # there). One warning is gfortran's, not the code's: any deferred-length
   # character array passed to an intent(out) allocatable dummy (FiNeR's
   # get_sections_list, loop) gives "'.<name>' is used uninitialized" for the
-  # hidden length the compiler made (gfortran 12.2.1; a 15-line reproducer
-  # with no FiNeR does it). A Fortran name cannot start with '.', so only
-  # those lines are dropped; every other line fails the guard.
+  # hidden length the compiler made (gfortran 12.2.1; a reproducer of 19 lines
+  # in two files, with no FiNeR, does it). A Fortran name cannot start with
+  # '.', so only those lines are dropped; every other line fails the guard.
   # ---------------------------------------------------------------------------
   wall-clean-app)
     if [ -z "$BUILD" ]; then

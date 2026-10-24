@@ -142,9 +142,10 @@ The refused runs cover each exit status of the driver:
 
 `guard_build-config` is skipped in a tree that is not the preset's `build/`. `wall-clean-app` drops one
 gfortran 12 warning, `'.<name>' is used uninitialized`. It is a compiler false positive on the hidden
-length of any deferred-length character array passed to an `intent(out)` dummy, as FiNeR's are; a
-15-line reproducer without FiNeR shows it too. A Fortran name cannot start with `.`, so no warning
-about the code itself can be dropped this way.
+length of any deferred-length character array passed to an `intent(out)` dummy, as FiNeR's are. A
+reproducer of 19 lines in two files, without FiNeR, shows it too (FUSS
+`plan-bucket/records/2026-10-24-morph-standalone/gfortran-false-positive/`). A Fortran name cannot
+start with `.`, so no warning about the code itself can be dropped this way.
 
 ## The driver
 
