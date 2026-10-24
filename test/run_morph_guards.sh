@@ -238,13 +238,21 @@ for guard in "${GUARDS[@]}"; do
     # gfortran prints a warning as: location line, blank, source line, caret
     # line, "Warning: ..." [, then a note block]. Keep the "Warning:" and
     # "Error:" lines that are not the hidden-length case.
-    left=$(grep -E '^(Warning|Error|Fatal Error):' "$WORK/app.log" \
-           | grep -vE "^Warning: .\.[A-Za-z0-9_]+. is used uninitialized \[-Wuninitialized\]$" || true)
+    HIDDEN='^Warning: .\.[A-Za-z0-9_]+. is used uninitialized \[-Wuninitialized\]$'
+    left=$(grep -E '^(Warning|Error|Fatal Error):' "$WORK/app.log" | grep -vE "$HIDDEN" || true)
     if [ $rc -eq 0 ] && [ -z "$left" ]; then
-      n=$(grep -cE "^Warning: .\.[A-Za-z0-9_]+. is used uninitialized" "$WORK/app.log")
+      n=$(grep -cE "$HIDDEN" "$WORK/app.log")
       pass "the driver compiles -Wall clean against $BUILD ($n hidden-length false positive(s) dropped)"
-    else
+    elif [ -n "$left" ]; then
+      # only the diagnostics that fail the guard, each with the lines gfortran
+      # prints before it from its location line (a "note:" block that follows
+      # a dropped warning starts with a location line too, and is dropped)
       bad "the driver does not compile -Wall clean (exit status $rc):"
+      HIDDEN=$HIDDEN awk '/:[0-9]+:[0-9]+:$/ { blk = $0 "\n"; next }
+                          /^(Warning|Error|Fatal Error):/ { if ($0 !~ ENVIRON["HIDDEN"]) printf "%s%s\n", blk, $0; blk = ""; next }
+                          { blk = blk $0 "\n" }' "$WORK/app.log" | sed 's/^/          /' | head -40
+    else
+      bad "the driver does not compile (exit status $rc):"
       sed 's/^/          /' "$WORK/app.log" | head -40
     fi
     ;;
