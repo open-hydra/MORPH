@@ -78,6 +78,22 @@ is no MPI, because MORPH is rank-agnostic (plan 09 §9). By default ORION and Fi
 (`../../../lib/ORION` and `../../../lib/third_party/FiNeR`), the same layout ICE uses. The binary trees
 of ORION and FiNeR are created inside MORPH's own build tree.
 
+**Compilers.** MORPH is tested with gfortran 12.2.1. With ifx 2023.1 (`--compilers=intel`) it builds,
+but 9 of its 31 tests fail and the 4 comparisons that depend on them do not run (the -Wall guards
+are gfortran's and are not registered). The three reasons were found on 2026-10-24 and are not fixed
+(FUSS `plan-bucket/records/2026-10-24-morph-standalone/intel/`):
+
+- ORION writes PLOT3D values with list-directed output. gfortran writes 17 significant digits, which
+  read back to the same bits; ifx writes 15 or 16. Every check of `verify.py` that compares the output
+  bit for bit with the input or with the law then fails.
+- `nodeshift` stops at its first step with `allocatable array is already allocated` (`Set_Shift` in
+  `main.f90`). This is an ifx bug: an `allocate( law, source = <structure constructor> )` that omits
+  an allocatable component can leave that component with a non-null address, so `allocated()` says
+  no and the next `allocate` says yes. A reproducer of 48 lines is in the record.
+- `prescribed` ends in a segmentation fault inside ifx's runtime, in the deallocation of the blocks
+  by `domain%free`, under `-fiopenmp` only. Freeing each component of each block first avoids it; the
+  cause is not known.
+
 **FiNeR's dependencies, and why MORPH has its own FiNeR.** FiNeR v2.2.0 tracks none of its five
 dependencies (PENF, StringiFor, FACE, FLAP, BeFoR64), although its CMake still adds them from
 `src/third_party/`. Before configuring, `install.sh build` (or `install.sh update`) clones each
@@ -114,14 +130,16 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
 or below 1e-14 relative. Plan 09 records ~1e-15 for FUSS's moving cases; the measured maximum on this
-mesh is 4.1e-16 (gfortran 12.2.1, `-O3 -march=native -flto`, 1 and 8 threads). A real GCL defect does
-not hide at that level. In scratch builds (FUSS `plan-bucket/records/2026-10-24-morph-standalone/red/`),
-dropping one face's swept volume gave 2.0e-2, and the driver itself stopped. An error of 1e-9
-relative in one face's swept volume gave 2.0e-11: the driver's own `gcl-tolerance` (1e-10) let it
-through, and this gate failed it. A prescribed law evaluated at the start of the step instead of the
-end kept the GCL at 4.1e-16, and the node check below caught it (1.0e-4 m).
+mesh is 4.1e-16 (gfortran 12.2.1, `-O3 -march=native -flto`, 1 and 8 threads), and up to 2.4e-15 with
+ifx 2023.1. A real GCL defect does not hide at that level. In scratch builds (FUSS
+`plan-bucket/records/2026-10-24-morph-standalone/red/`), dropping one face's swept volume gave 2.0e-2,
+and the driver itself stopped. An error of 1e-9 relative in one face's swept volume gave 2.0e-11: the
+driver's own `gcl-tolerance` (1e-10) let it through, and this gate failed it. A prescribed law
+evaluated at the start of the step instead of the end kept the GCL at 4.1e-16, and the node check
+below caught it (1.0e-4 m).
 
-`verify.py` then checks each law against the mesh MORPH read:
+`verify.py` then checks each law against the mesh MORPH read. Its bit-for-bit checks need the exact
+PLOT3D round trip of a gfortran build (Compilers).
 
 - `static`: the output is the input, bit for bit, and every residual is exactly 0.
 - `translation`: `vel*dt` is added once per step, bit for bit.
@@ -163,7 +181,7 @@ a step's GCL residual exceeded `gcl-tolerance`.
 [MORPH-IO]
 mesh-in     = INPUT/mesh.p3d     ; required
 mesh-out    = OUTPUT/mesh.p3d
-mesh-format = p3d                ; p3d (exact, 17 digits) or tecplot (ASCII .tec/.dat, 15 digits)
+mesh-format = p3d                ; p3d (17 digits and exact with gfortran) or tecplot (ASCII .tec/.dat, 15 digits)
 gcl-log     = OUTPUT/gcl.dat
 out-diter   = 0                  ; 0: the final mesh only
 shell-diter = 1
@@ -262,7 +280,8 @@ It exits 1 when anything differs. It is not part of ctest, because FUSS moving i
    - FUSS holds a `morph_domain_t`, and `blk%node_old` goes;
    - FUSS keeps passing its own arrays to `Morph_Update` one block at a time, as it does today.
 
-   This is to be decided with the switch (plan 09 §11).
+   This is to be decided with the switch (plan 09 §11). The first option waits on the ifx crash in
+   `domain%free` (Compilers): hydra builds FUSS with ifx too (`figaro build hydra-MF --compilers=intel`).
 
 Smaller items noticed during the copy:
 
