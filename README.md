@@ -103,6 +103,15 @@ at another commit is **moved** to the pin, and the move is printed
 `./install.sh build` with the default FiNeR moves hydra's checkouts and changes what hydra's next
 build compiles. Point `--include-finer` at a clone of your own, as above.
 
+**hydra's checkout on 2026-10-24.** Its five FiNeR dependency checkouts were still the clones of
+2026-05-25, at the commits FiNeR `cfc9194` tracked (PENF v1.3.13, StringiFor v1.1.7, FACE v1.1.12,
+FLAP v1.2.13, BeFoR64 v1.1.8), not at the pins; hydra's own `figaro build` moves them to the same pins
+(`scripts/utils/finer_deps.sh`). Its `main` was 9 commits behind `origin/main`, which pins ORION
+`8cda645` where the checkout holds `5c32b73`: in the Fortran library `8cda645` changes the Tecplot ASCII
+reader and adds the STRANDID it reads to `orion_data`. MORPH was accepted against `5c32b73`; a scratch
+build against `8cda645` also passes all 33 tests and a Tecplot round trip (FUSS
+`plan-bucket/records/2026-10-24-morph-standalone/orion-8cda645/`).
+
 ORION is only read. With `--use-tecio`, however, ORION builds TecIO inside its own source tree, so the
 default is off: the driver reads and writes ASCII.
 
