@@ -20,19 +20,15 @@ It has two parts:
 The library never stops and does no I/O. Every entry point returns a `morph_status_t` and leaves the
 decision to its caller. It uses no FUSS module. The guards check all three rules (see Test).
 
-## Decisions (the user, 2026-10-24)
-
-The record is FUSS's `plan-bucket/12-coupled-wall-follow-up.md` (DECISIONS 2026-10-24) and the note in
-plan 09 §8.
+## Decisions
 
 1. **A standalone copy, now FUSS's only one.** MORPH was copied from FUSS's `src/lib/morph`. FUSS
    now builds this repository instead, as its git submodule `lib/MORPH`, and keeps no copy of its own.
-2. **A local repository only.** There is no remote and nothing is pushed. MORPH sits in hydra's
-   checkout at `src/lib/MORPH` but is not part of hydra: hydra shows it as untracked (`?? src/lib/MORPH/`),
-   and that is intended.
+2. **A repository of its own.** MORPH is https://github.com/open-hydra/MORPH; FUSS pins a commit of it
+   as its submodule `lib/MORPH`.
 3. **Interior geometry only.** MORPH fills cells `1..dim` of each block. The ghost-cell metrics
    (`BC_Connect_Metrics`, `BC_Symmetry_Metrics` and `BC_Extrapolate_Metrics` in FUSS's `Lib_Metrics.f90`)
-   need the block connectivity and stay in FUSS (plan 09 §7).
+   need the block connectivity and stay in FUSS.
 
 ## Layout
 
@@ -73,14 +69,13 @@ against it.
 
 `build` options are `--compilers=intel|gnu`, `--use-openmp`, `--use-tecio`, `--include-orion=<ORION tree>`
 and `--include-finer=<FiNeR tree>`. Set `CMAKE_BUILD_PARALLEL_LEVEL=<n>` for a parallel build. There
-is no MPI, because MORPH is rank-agnostic (plan 09 §9). By default ORION and FiNeR are hydra's
+is no MPI, because MORPH is rank-agnostic. By default ORION and FiNeR are hydra's
 (`../../../lib/ORION` and `../../../lib/third_party/FiNeR`), the same layout ICE uses. The binary trees
 of ORION and FiNeR are created inside MORPH's own build tree.
 
 **Compilers.** MORPH is tested with gfortran 12.2.1. With ifx 2023.1 (`--compilers=intel`) it builds,
 but 9 of its 31 tests fail and the 4 comparisons that depend on them do not run (the -Wall guards
-are gfortran's and are not registered). The three reasons were found on 2026-10-24 and are not fixed
-(FUSS `plan-bucket/records/2026-10-24-morph-standalone/intel/`):
+are gfortran's and are not registered). The three reasons were found on 2026-10-24 and are not fixed:
 
 - ORION writes PLOT3D values with list-directed output. gfortran writes 17 significant digits, which
   read back to the same bits; ifx writes 15 or 16. Every check of `verify.py` that compares the output
@@ -88,7 +83,7 @@ are gfortran's and are not registered). The three reasons were found on 2026-10-
 - `nodeshift` stops at its first step with `allocatable array is already allocated` (`Set_Shift` in
   `main.f90`). This is an ifx bug: an `allocate( law, source = <structure constructor> )` that omits
   an allocatable component can leave that component with a non-null address, so `allocated()` says
-  no and the next `allocate` says yes. A reproducer of 48 lines is in the record.
+  no and the next `allocate` says yes.
 - `prescribed` ends in a segmentation fault inside ifx's runtime, in the deallocation of the blocks
   by `domain%free`, under `-fiopenmp` only. Freeing each component of each block first avoids it; the
   cause is not known.
@@ -108,8 +103,7 @@ FLAP v1.2.13, BeFoR64 v1.1.8), not at the pins; hydra's own `figaro build` moves
 (`scripts/utils/finer_deps.sh`). Its `main` was 9 commits behind `origin/main`, which pins ORION
 `8cda645` where the checkout holds `5c32b73`: in the Fortran library `8cda645` changes the Tecplot ASCII
 reader and adds the STRANDID it reads to `orion_data`. MORPH was accepted against `5c32b73`; a scratch
-build against `8cda645` also passes all 33 tests and a Tecplot round trip (FUSS
-`plan-bucket/records/2026-10-24-morph-standalone/orion-8cda645/`).
+build against `8cda645` also passes all 33 tests and a Tecplot round trip.
 
 ORION is only read. With `--use-tecio`, however, ORION builds TecIO inside its own source tree, so the
 default is off: the driver reads and writes ASCII.
@@ -137,14 +131,13 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 | `driver` | 16 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, then the two outputs compared, plus four runs that must be refused |
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
-or below 1e-14 relative. Plan 09 records ~1e-15 for FUSS's moving cases; the measured maximum on this
-mesh is 4.1e-16 (gfortran 12.2.1, `-O3 -march=native -flto`, 1 and 8 threads), and up to 2.4e-15 with
-ifx 2023.1. A real GCL defect does not hide at that level. In scratch builds (FUSS
-`plan-bucket/records/2026-10-24-morph-standalone/red/`), dropping one face's swept volume gave 2.0e-2,
-and the driver itself stopped. An error of 1e-9 relative in one face's swept volume gave 2.0e-11: the
-driver's own `gcl-tolerance` (1e-10) let it through, and this gate failed it. A prescribed law
-evaluated at the start of the step instead of the end kept the GCL at 4.1e-16, and the node check
-below caught it (1.0e-4 m).
+or below 1e-14 relative. FUSS's moving cases give ~1e-15; the measured maximum on this mesh is 4.1e-16
+(gfortran 12.2.1, `-O3 -march=native -flto`, 1 and 8 threads), and up to 2.4e-15 with ifx 2023.1. A
+real GCL defect does not hide at that level. In scratch builds, dropping one face's swept volume gave
+2.0e-2, and the driver itself stopped. An error of 1e-9 relative in one face's swept volume gave
+2.0e-11: the driver's own `gcl-tolerance` (1e-10) let it through, and this gate failed it. A
+prescribed law evaluated at the start of the step instead of the end kept the GCL at 4.1e-16, and the
+node check below caught it (1.0e-4 m).
 
 `verify.py` then checks each law against the mesh MORPH read. Its bit-for-bit checks need the exact
 PLOT3D round trip of a gfortran build (Compilers).
@@ -169,9 +162,8 @@ The refused runs cover each exit status of the driver:
 `guard_build-config` is skipped in a tree that is not the preset's `build/`. `wall-clean-app` drops one
 gfortran 12 warning, `'.<name>' is used uninitialized`. It is a compiler false positive on the hidden
 length of any deferred-length character array passed to an `intent(out)` dummy, as FiNeR's are. A
-reproducer of 19 lines in two files, without FiNeR, shows it too (FUSS
-`plan-bucket/records/2026-10-24-morph-standalone/gfortran-false-positive/`). A Fortran name cannot
-start with `.`, so no warning about the code itself can be dropped this way.
+reproducer of 19 lines in two files, without FiNeR, shows it too. A Fortran name cannot start with
+`.`, so no warning about the code itself can be dropped this way.
 
 ## The driver
 
@@ -249,19 +241,19 @@ configures `MORPHL` only, with FUSS's flags, and `FUSSL` links it. FUSS still ca
 repository's guards on the submodule. An edit here reaches FUSS when FUSS moves its submodule pin; the
 drift guard that compared the two copies (`test/check_sync.sh`) is gone with FUSS's copy.
 
-## Next steps (plan 09 §8)
+## Next steps
 
 1. **The duplicated-kernel cleanup.** FUSS's `Lib_Metrics.f90` still holds its own copies of the
    kernels: `Check_Mesh_Type`, `Compute_Norm_Area` and `Compute_Metric_Tensor`. The last one is live:
-   the three `BC_*_Metrics` call it from 18 sites. According to plan 09 §11, the two copies already
+   the three `BC_*_Metrics` call it from 18 sites. The two copies already
    disagree on the ghost volume (`abs()` five-tetrahedron against MORPH's signed volume), and they
    agree on `M`, the only ghost metric that is read. The ghost metrics stay in FUSS (decision 3), so
-   the cleanup is no longer the port of `BC_*_Metrics` into MORPH that plan 09 §8 planned. Instead:
+   the cleanup is no longer a port of `BC_*_Metrics` into MORPH. Instead:
    - make FUSS's `BC_*_Metrics` call MORPH's per-cell kernel. `Morph_Metric_Tensor` is public in
      `Morph_Metrics` but not exported by `Morph_API`, so the API must export it first;
    - then delete the three legacy kernels.
 
-   The gate is plan 09 §11's: FUSS's `run_regression.sh -p 1 -k` unchanged, where only `volg`, which
+   The gate: FUSS's `run_regression.sh -p 1 -k` unchanged, where only `volg`, which
    nothing reads, may move.
 2. **Who owns `blk%node_old`.** At FUSS `2943354`, FUSS allocates `blk%node_old` on a moving mesh
    (`Mod_Allocate_Data.f90:118`) and frees it on remote blocks (`:336`). The adapter writes it
@@ -272,7 +264,7 @@ drift guard that compared the two copies (`test/check_sync.sh`) is gone with FUS
    - FUSS holds a `morph_domain_t`, and `blk%node_old` goes;
    - FUSS keeps passing its own arrays to `Morph_Update` one block at a time, as it does today.
 
-   FUSS's switch to this repository left it open (plan 09 §11). The first option waits on the ifx crash in
+   FUSS's switch to this repository left it open. The first option waits on the ifx crash in
    `domain%free` (Compilers): hydra builds FUSS with ifx too (`figaro build hydra-MF --compilers=intel`).
 
 Smaller items noticed during the copy:
