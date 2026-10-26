@@ -25,8 +25,8 @@ decision to its caller. It uses no FUSS module. The guards check all three rules
 The record is FUSS's `plan-bucket/12-coupled-wall-follow-up.md` (DECISIONS 2026-10-24) and the note in
 plan 09 §8.
 
-1. **A standalone copy.** MORPH was copied from FUSS's `src/lib/morph`. FUSS keeps its own copy,
-   unchanged, and still builds from it. FUSS switches to this repository later (Next steps).
+1. **A standalone copy, now FUSS's only one.** MORPH was copied from FUSS's `src/lib/morph`. FUSS
+   now builds this repository instead, as its git submodule `lib/MORPH`, and keeps no copy of its own.
 2. **A local repository only.** There is no remote and nothing is pushed. MORPH sits in hydra's
    checkout at `src/lib/MORPH` but is not part of hydra: hydra shows it as untracked (`?? src/lib/MORPH/`),
    and that is intended.
@@ -54,7 +54,6 @@ test/
   driver/                 run_case.sh and the multiblock case: generate.py, verify.py, input-*.ini
   run_morph_guards.sh     the architecture guards
   check_build_config.sh   the build tree against CMakePresets.json
-  check_sync.sh           the drift guard against FUSS (not a ctest test)
 ```
 
 ## Build
@@ -230,7 +229,7 @@ the driver.
   the first step jumps from the reference to the displaced shape (a swept-outflow ratio of 0.12 on the
   test mesh); later steps move by about `amp*omega*dt`.
 
-## Where MORPH comes from, and the sync guard
+## Where MORPH comes from
 
 The first commit (`40f4849`) copies 14 files from FUSS commit
 `2943354329820c795d715323a42eace656c58924` (branch `worktree-porous-pyrolysis`, 2026-10-23, which is
@@ -243,32 +242,16 @@ these:
   `test/check_build_config.sh` and the guard script;
 - the driver's input layer: FUSS's `Registry.f90`, `Backend_INI.f90` and `Read_Ini.f90`, renamed.
 
-**FUSS still uses its own copy.** It compiles `src/lib/morph` into `FUSSL`, calls it through
-`src/lib/numerics/space/Adapter_Morph.f90`, and links nothing from this repository. So an edit here
-does not reach FUSS, and an edit in FUSS does not reach MORPH. To see how far the two have drifted,
-fetch FUSS, then run:
-
-```bash
-git -C ../FUSS fetch
-./test/check_sync.sh [--fuss <FUSS repository>] [--diff] [REF]   # REF default: worktree-porous-pyrolysis
-```
-
-The guard reads FUSS through git only and changes neither repository. It reports three things:
-
-- which verbatim files MORPH has changed since `2943354`;
-- which of FUSS's originals, verbatim or adapted, FUSS has changed between `2943354` and REF;
-- which files exist under FUSS's `src/lib/morph` at REF but not in MORPH.
-
-It exits 1 when anything differs. It is not part of ctest, because FUSS moving is not a MORPH defect.
+**FUSS builds this repository.** FUSS has no `src/lib/morph` any more: its `CMakeLists.txt` adds this
+repository with `add_subdirectory` (the submodule `lib/MORPH`, or the tree `MORPH_PATH` names), which
+configures `MORPHL` only, with FUSS's flags, and `FUSSL` links it. FUSS still calls MORPH through
+`src/lib/numerics/space/Adapter_Morph.f90` alone, and its `test/run_morph_guards.sh` runs this
+repository's guards on the submodule. An edit here reaches FUSS when FUSS moves its submodule pin; the
+drift guard that compared the two copies (`test/check_sync.sh`) is gone with FUSS's copy.
 
 ## Next steps (plan 09 §8)
 
-1. **FUSS's switch to MORPH.** Replace FUSS's in-tree `src/lib/morph` with an `add_subdirectory` of
-   this repository, discovered the way ORION is (`MORPH_PATH`), and link `MORPHL`. `Adapter_Morph.f90`
-   is the only FUSS file that changes (plan 09 §7). After the switch, FUSS's regression baseline and
-   `run_morph_guards.sh` must be unchanged. Run `check_sync.sh` first: a FUSS-side change still to
-   port must reach MORPH before FUSS starts building from it.
-2. **The duplicated-kernel cleanup.** FUSS's `Lib_Metrics.f90` still holds its own copies of the
+1. **The duplicated-kernel cleanup.** FUSS's `Lib_Metrics.f90` still holds its own copies of the
    kernels: `Check_Mesh_Type`, `Compute_Norm_Area` and `Compute_Metric_Tensor`. The last one is live:
    the three `BC_*_Metrics` call it from 18 sites. According to plan 09 §11, the two copies already
    disagree on the ghost volume (`abs()` five-tetrahedron against MORPH's signed volume), and they
@@ -280,7 +263,7 @@ It exits 1 when anything differs. It is not part of ctest, because FUSS moving i
 
    The gate is plan 09 §11's: FUSS's `run_regression.sh -p 1 -k` unchanged, where only `volg`, which
    nothing reads, may move.
-3. **Who owns `blk%node_old`.** At FUSS `2943354`, FUSS allocates `blk%node_old` on a moving mesh
+2. **Who owns `blk%node_old`.** At FUSS `2943354`, FUSS allocates `blk%node_old` on a moving mesh
    (`Mod_Allocate_Data.f90:118`) and frees it on remote blocks (`:336`). The adapter writes it
    (`Adapter_Morph.f90:233`), but it builds its own previous positions from the current nodes
    (`:179`), and nothing else in FUSS reads `blk%node_old`. In MORPH's `morph_domain_t` the previous
@@ -289,13 +272,13 @@ It exits 1 when anything differs. It is not part of ctest, because FUSS moving i
    - FUSS holds a `morph_domain_t`, and `blk%node_old` goes;
    - FUSS keeps passing its own arrays to `Morph_Update` one block at a time, as it does today.
 
-   This is to be decided with the switch (plan 09 §11). The first option waits on the ifx crash in
+   FUSS's switch to this repository left it open (plan 09 §11). The first option waits on the ifx crash in
    `domain%free` (Compilers): hydra builds FUSS with ifx too (`figaro build hydra-MF --compilers=intel`).
 
 Smaller items noticed during the copy:
 
 - The driver's registry is a copy of FUSS's `Registry.f90`, and ICE carries a registry of its own: a
-  fix to one reaches none of the others. `check_sync.sh` reports FUSS-side changes.
+  fix to one reaches none of the others.
 - `generate_markdown` in the registry has no caller yet: FUSS documents its keys through
   `src/app/docgen.f90`, MORPH through this README.
 - `amp`'s `>= 0` rule is FUSS's, and, as in FUSS, the registry does not check rules on vector keys.

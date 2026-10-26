@@ -80,8 +80,8 @@ add_test(NAME guard_build-config
          COMMAND bash ${MORPH_TEST_DIR}/check_build_config.sh --tree ${CMAKE_BINARY_DIR})
 set_tests_properties(guard_build-config PROPERTIES LABELS guard SKIP_RETURN_CODE 77)
 
-# What FUSS's switch to MORPH will do: add_subdirectory + link MORPHL, from a
-# parent with a module directory and from one without (embed/run_embed.sh)
+# What FUSS does: add_subdirectory + link MORPHL, from a parent with a module
+# directory and from one without (embed/run_embed.sh)
 add_test(NAME guard_embed
          COMMAND bash ${MORPH_TEST_DIR}/embed/run_embed.sh ${CMAKE_SOURCE_DIR} ${MORPH_RUN_DIR}/embed
                       ${CMAKE_Fortran_COMPILER})

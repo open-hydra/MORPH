@@ -2,9 +2,10 @@
 #===============================================================================
 #         FILE: test/embed/run_embed.sh
 #        USAGE: run_embed.sh <MORPH tree> <work dir> <Fortran compiler>
-#  DESCRIPTION: MORPH embedded in another CMake project, as FUSS will embed it
-#               (README, next steps): the parent of test/embed adds the MORPH
-#               tree with add_subdirectory, links MORPHL and runs probe.f90.
+#  DESCRIPTION: MORPH embedded in another CMake project, as FUSS embeds it
+#               (README, Where MORPH comes from): the parent of test/embed
+#               adds the MORPH tree with add_subdirectory, links MORPHL and
+#               runs probe.f90.
 #               Twice: once with a module directory of the parent's (FUSS sets
 #               one) and once without. Only MORPHL may be configured: no ORION,
 #               no FiNeR, no driver, no tests.
