@@ -274,3 +274,7 @@ Smaller items noticed during the copy:
 - `generate_markdown` in the registry has no caller yet: FUSS documents its keys through
   `src/app/docgen.f90`, MORPH through this README.
 - `amp`'s `>= 0` rule is FUSS's, and, as in FUSS, the registry does not check rules on vector keys.
+
+## License
+
+MORPH is free and open-source software released under the [GNU General Public License v3.0](LICENSE), as FUSS is.
