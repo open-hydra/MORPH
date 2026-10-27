@@ -1,13 +1,16 @@
 # MORPH's test suite:  ctest --test-dir <build> [-L unit|guard|driver] [-j 2]
 #
-#   unit    the three unit programs MORPH came with (test/unit), built on
-#           MORPHL, at 1 and 8 threads, and the two outputs compared
+#   unit    the three unit programs MORPH came with (test/unit) and the one of
+#           the smoothed interior, built on MORPHL, at 1 and 8 threads, and the
+#           two outputs compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
 #           build-configuration check, and MORPHL embedded in another project
 #   driver  bin/MORPH on the three-block mesh of driver/multiblock: one run per
-#           motion law at 1 and 8 threads, gated on the per-step discrete-GCL
-#           residual and checked node by node (verify.py), the two outputs
-#           compared, and four runs the driver must refuse
+#           motion law and per nodeshift variant (interior line or smooth, a
+#           uniform or a bumped face displacement) at 1 and 8 threads, gated on
+#           the per-step discrete-GCL residual and checked node by node
+#           (verify.py), the two outputs compared, and five runs the driver
+#           must refuse
 #
 # An 8-thread test asks ctest for 8 processors (PROCESSORS), so `ctest -j N`
 # does not oversubscribe a shared machine. In a serial build (USE_OPENMP OFF)
@@ -26,7 +29,7 @@ endif()
 # ---------------------------------------------------------------------------
 # unit
 # ---------------------------------------------------------------------------
-foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift)
+foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
@@ -99,7 +102,11 @@ endif()
 set(MORPH_CASE     ${MORPH_TEST_DIR}/driver/multiblock)
 set(MORPH_RUN_CASE ${MORPH_TEST_DIR}/driver/run_case.sh)
 
-foreach(law static translation prescribed nodeshift)
+# nodeshift-smooth: the uniform recession with the smoothed interior (it must
+# reproduce the line law); nodeshift-bump: a face displacement that varies
+# across the face, smoothed (the equilibrium checks); nodeshift-bump-line: the
+# same displacement under the line law (the replica)
+foreach(law static translation prescribed nodeshift nodeshift-smooth nodeshift-bump nodeshift-bump-line)
   foreach(nt ${MORPH_THREADS})
     set(t driver_${law}_omp${nt})
     add_test(NAME ${t}
@@ -131,4 +138,5 @@ endfunction()
 morph_refusal(refuses_unknown_key   input-refuse-unknown.ini  1 "unknown option in input.ini: \\[MORPH-Motion\\] velocity")
 morph_refusal(refuses_value_count   input-refuse-count.ini    1 "\\[MORPH-Motion\\] vel has 2 value\\(s\\), 3 expected")
 morph_refusal(refuses_consumed_line input-refuse-consumed.ini 2 "failed in block 1, status [0-9]+ .*consumes a whole grid line")
+morph_refusal(refuses_smooth_maxit  input-refuse-smooth-maxit.ini 2 "failed in block 1, status 6 .*smoothing: not converged in 1 sweeps")
 morph_refusal(refuses_gcl_residual  input-refuse-gcl.ini      3 "step 1: discrete GCL residual .* exceeds gcl-tolerance")

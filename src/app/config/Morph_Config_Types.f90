@@ -45,6 +45,12 @@ module Morph_Config_Types_m
     integer             :: shift_block    !> nodeshift: the block whose face recedes
     integer             :: shift_face     !> nodeshift: that face, 1..6 (i-low, i-high, j-low, j-high, k-low, k-high)
     real(R8)            :: shift_vel(3)   !> nodeshift: velocity of every node of that face [m/s]
+    real(R8)            :: shift_bump_vel(3)   !> nodeshift: velocity added at the centre of the face, times the bump profile [m/s]
+    real(R8)            :: shift_bump_width    !> nodeshift: radius of the bump over the face's unit square
+    character(len=llen) :: interior       !> nodeshift: line | smooth, how the nodes between the two faces move
+    real(R8)            :: smooth_tol     !> smooth: converged when a sweep's largest update <= smooth_tol * max |disp|
+    integer             :: smooth_maxit   !> smooth: sweeps allowed per solved set before MORPH returns an error
+    real(R8)            :: smooth_omega   !> smooth: over-relaxation factor, 0 = 2/(1 + sin(pi/N))
   end type motion_t
 
   type(io_t),     public, target :: obj_io

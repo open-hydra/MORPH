@@ -4,6 +4,8 @@ MORPH (Mesh mOtion, Remeshing and Positioning Handler) is the mesh-motion compon
 solver of its own. It works on structured multi-block meshes of hexahedra and does geometry only:
 
 - moves the nodes of a block under a motion law (`static`, `prescribed`, `translation`, `nodeshift`);
+  under `nodeshift` the nodes between the receding face and its opposite follow either their grid
+  line or an elliptic smoothing of the face displacement (`interior`, below);
 - rebuilds each cell's geometry: the signed volume (divergence theorem, four triangles per face), the
   metric tensor, the face normals and areas, and `dl`;
 - returns the volume each face swept during the step, and the discrete geometric conservation law
@@ -39,6 +41,7 @@ cmake/                  FUSS's flag files, verbatim
 src/lib/                the library (MORPHL)
   Morph_API.f90           the facade: the only module a solver needs to use
   base/ metrics/ motion/ quality/   FUSS's kernels, verbatim
+  motion/Morph_Smooth.f90 the smoothed interior of the nodeshift law (new)
   domain/Morph_Domain.f90 morph_domain_t: the multi-block mesh state (new)
 src/app/                the driver (MORPH)
   main.f90                read, move, write
@@ -46,7 +49,7 @@ src/app/                the driver (MORPH)
   io/Morph_IO.f90         the mesh through ORION: PLOT3D or Tecplot ASCII
 test/
   CMakeLists.txt          the ctest suite
-  unit/                   FUSS's three unit programs, verbatim, and their runner
+  unit/                   FUSS's three unit programs, verbatim, test_morph_smooth, and their runner
   driver/                 run_case.sh and the multiblock case: generate.py, verify.py, input-*.ini
   run_morph_guards.sh     the architecture guards
   check_build_config.sh   the build tree against CMakePresets.json
@@ -83,7 +86,8 @@ are gfortran's and are not registered). The three reasons were found on 2026-10-
 - `nodeshift` stops at its first step with `allocatable array is already allocated` (`Set_Shift` in
   `main.f90`). This is an ifx bug: an `allocate( law, source = <structure constructor> )` that omits
   an allocatable component can leave that component with a non-null address, so `allocated()` says
-  no and the next `allocate` says yes.
+  no and the next `allocate` says yes. The smoothed interior adds a second such component to the
+  law, `dsp`, which its first step allocates after the same `allocated()` test; not checked with ifx.
 - `prescribed` ends in a segmentation fault inside ifx's runtime, in the deallocation of the blocks
   by `domain%free`, under `-fiopenmp` only. Freeing each component of each block first avoids it; the
   cause is not known.
@@ -117,7 +121,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 33 tests in an OpenMP build
+ctest --test-dir build -j 2              # 46 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -126,9 +130,9 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 9 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
+| `unit` | 12 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's) and `test_morph_smooth` (the smoothed interior, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
-| `driver` | 16 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, then the two outputs compared, plus four runs that must be refused |
+| `driver` | 26 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus five runs that must be refused |
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
 or below 1e-14 relative. FUSS's moving cases give ~1e-15; the measured maximum on this mesh is 4.1e-16
@@ -146,9 +150,23 @@ PLOT3D round trip of a gfortran build (Compilers).
 - `translation`: `vel*dt` is added once per step, bit for bit.
 - `prescribed`: the output matches `x_ref + amp*sin(k.x_ref + omega*t_N + phase)` within 1e-15 m. The
   measured difference is 5.6e-17 m, one ulp; the compiler contracts the argument into FMAs.
-- `nodeshift`: the receding face moves by `nodeshift-vel*dt` per step, bit for bit. The opposite face
-  and the other blocks do not move. The lines in between are compressed uniformly: they match a
-  replica of the law within 1e-15 m (measured 1.4e-17 m).
+- `nodeshift`: the receding face moves by its displacement per step (`nodeshift-vel*dt`, bit for
+  bit; with the bump of `nodeshift-bump-vel` within 1e-15 m, measured 0, because the compiler may
+  contract the bump's arithmetic into FMAs). The opposite face and the other blocks do not move.
+  Then, by `interior`:
+  - `line` (`input-nodeshift.ini`, `input-nodeshift-bump-line.ini`): the lines in between are
+    compressed uniformly, each on its own: they match a replica of the law within 1e-15 m (measured
+    1.4e-17 m, one ulp, in both cases).
+  - `smooth` (`input-nodeshift-smooth.ini`, `input-nodeshift-bump.ini`): the four edges match the
+    replica of the line law (measured 0); the `y` and `z` coordinates, which no face node moves in,
+    are untouched bit for bit; and, in every step, from the snapshots `out-diter = 1` writes, the
+    solved nodes are in spring equilibrium: the residual `|sum_q w (d_q - d_p)| / sum_q w` with
+    `w = 1/|e|` on the step's old nodes is at most 1e-11 of the largest face displacement (ten times
+    `smooth-tolerance`; measured 2.7e-13 and 1.9e-13), and every node's displacement lies between the
+    prescribed ones (the maximum principle; measured excess 0). On this warped mesh the smoothed
+    nodes depart from the line law's `s/L` blend by up to 1.5e-7 m per step with the uniform
+    displacement (the lines are not straight) and by up to 9.9e-4 m per step with the bump (the
+    centre of the face moves 4.5e-3 m per step).
 - for every law, the nodes shared by two blocks hold the same bits in both blocks.
 
 The refused runs cover each exit status of the driver:
@@ -156,7 +174,7 @@ The refused runs cover each exit status of the driver:
 | exit status | refused run |
 |---|---|
 | 1 | an unknown key; a three-component key given two values |
-| 2 | a nodeshift that consumes a whole grid line (a MORPH status) |
+| 2 | a nodeshift that consumes a whole grid line; a smoothing allowed one sweep (`smooth-maxit = 1`, status 6) -- MORPH statuses |
 | 3 | a `gcl-tolerance` below round-off |
 
 `guard_build-config` is skipped in a tree that is not the preset's `build/`. `wall-clean-app` drops one
@@ -203,12 +221,70 @@ vel = 0.0 0.0 0.0                ; translation [m/s]
 nodeshift-block = 1              ; nodeshift: this block's face moves, every other block is static
 nodeshift-face  = 1              ; 1..6 = i-low, i-high, j-low, j-high, k-low, k-high
 nodeshift-vel   = 2.5 0.0 0.0    ; [m/s], every node of the face
+nodeshift-bump-vel   = 0.0 0.0 0.0  ; [m/s], added at the centre of the face times (1 - r^2/width^2)^2, r < width
+nodeshift-bump-width = 0.25      ; r over the face mapped to the unit square
+interior         = line          ; nodeshift: line | smooth, the nodes between the receding and the pinned face
+smooth-tolerance = 1.0e-12       ; smooth: a sweep's largest update over the largest face displacement
+smooth-maxit     = 100000        ; smooth: sweeps allowed per set of nodes, then status 6 (MORPH_ERR_SMOOTH)
+smooth-omega     = 0.0           ; smooth: over-relaxation, below 2; 0 = 2/(1 + sin(pi/N))
 gcl-tolerance   = 1.0e-10        ; asserted every step, as FUSS's Update_Mesh does
 ```
 
 `[MORPH-Motion]` keeps the names of FUSS's `[FUSS-MeshMotion]` keys. The `nodeshift-*` keys are the
 driver's own: in FUSS the receding wall gives the displacement. `[MORPH-IO]` and `[MORPH-Time]` belong to
 the driver.
+
+### The nodeshift interior
+
+Under `nodeshift` one face of a block moves by a displacement given per node (FUSS: the ablating
+wall's recession over the step), the opposite face is pinned, and `interior` says how the nodes
+between them move. Both keep the receding face, the pinned face and the line-consumption check
+(status `MORPH_ERR_NEGVOL` when a line is shorter than its displacement) the same.
+
+- `line` (the default, `Morph_Motion_Nodeshift.f90`): a node at arc length `s` from the pinned end
+  of its line, of length `L`, moves by `disp * s/L`. Each line is compressed uniformly on its own, a
+  graded mesh keeps its grading, and a displacement that varies across the face is imprinted, scaled
+  by `s/L`, on every node plane down to the pinned face. This is FUSS's law since plan 08: the
+  default stays `line` so that FUSS's regression references hold bit for bit. The path's node
+  arithmetic is unchanged by the smoothing (only the search for the consumed line moved into a
+  procedure of its own): a build of the commit before it, `ae699fc`, writes the same bytes for the
+  `nodeshift` driver case and the `test_morph_nodeshift` output (checked 2026-10-27).
+- `smooth` (`Morph_Smooth.f90`): the displacement of every node between the faces is the equilibrium
+  of lineal springs on the grid edges, stiffness `1/|e|` on the old nodes (Batina 1990): at each solved
+  node `sum_q (d_q - d_p)/|e_pq| = 0`, the discrete Laplacian with inverse-distance weights. Along a
+  straight line that makes `d` linear in the arc length, which is the line law, so on a block of
+  straight lines with a uniform face displacement the two interiors agree to the solver's tolerance
+  (`test_morph_smooth`: 0 and 1.4e-17 m on a Cartesian and on a graded block), and a graded line keeps
+  its grading; index-space weights would not do that. With a displacement that varies across the face
+  the deformation spreads into the block and dies away towards the pinned face instead of being
+  imprinted on every plane. The solve runs lowest dimension first, so that an entity is fixed before
+  the next is solved: the receding face (`disp`), the pinned face (0), the four edges of the block
+  that join them (the line law's closed form, evaluated the same way in every block that holds the
+  edge; against the line path's own arithmetic one rounding can differ, the compiler contracting that
+  path into FMAs: 1.4e-17 m on 4 of the 20 edge nodes of the test mesh), the four side faces (the
+  in-face springs only, Dirichlet on the edges), then the interior (all six springs). Each set is iterated with red-black
+  SOR until a sweep's largest update is at most `smooth-tolerance` times the largest face
+  displacement, `smooth-maxit` sweeps at most, with `smooth-omega` or, at 0, Young's
+  `2/(1 + sin(pi/N))` for the longest extent `N` of the set. A node of one colour reads only the other
+  colour and the stopping test is a max-norm, so the result does not depend on the number of threads
+  (the `_threads_identical` tests). The start of each step's solve is the previous step's field (the
+  line law on the first step): on the test mesh a steady recession converges in about 15-20 interior
+  sweeps and 12 per side face. A set that does not converge, or two coincident neighbouring nodes,
+  return status 6 (`MORPH_ERR_SMOOTH`) with a message; the nodes are then left where they were.
+
+Two consequences of the smoothed interior to keep in mind:
+
+- **2-D meshes and block seams.** In a 2-D mesh (two node planes in `k`) every node of a seam between
+  two blocks is on an edge of each block, and the edges are the line law's closed form: the two
+  blocks agree on the seam bit for bit, as FUSS's `Update_Mesh` asserts. The two node planes are
+  solved as two side faces with the same data, weights and colouring and come out the same bit for
+  bit (`test_morph_smooth`). In a 3-D mesh a seam face has nodes inside it, solved by each block
+  with its own sweep order: the two blocks agree there only to the tolerance, not bitwise. FUSS's
+  interface assertion would then refuse the step; a 3-D use needs the seam synchronised by the
+  caller (or the seam nodes made Dirichlet) first.
+- **Restarts.** The warm start makes the field reproducible across a restart only to the
+  tolerance (a restart solves the first step from the line law). Nothing else is kept: the law
+  still displaces incrementally from the old nodes and needs nothing beyond the mesh.
 
 - Only `[MORPH-*]` sections are read. In those sections the driver refuses an unknown key, a repeated
   section, a value that cannot be read, a vector key without exactly 3 values and a string longer

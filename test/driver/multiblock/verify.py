@@ -21,10 +21,22 @@ Then what each law must have done to the nodes, from the mesh MORPH read:
   translation  x + vel*dt added once per step, bit for bit
   prescribed   x_ref + amp*sin(k.x_ref + omega*t_N + phase), within POS_TOL:
                the compiler contracts the argument into FMAs, Python does not
-  nodeshift    the receding face moved by nodeshift-vel*dt per step and the
-               opposite face pinned, both bit for bit; the lines between them
-               compressed uniformly (a replica of the law's arithmetic, within
-               POS_TOL for the same reason); every other block untouched
+  nodeshift    the receding face moved by its displacement per step
+               (nodeshift-vel*dt, plus the bump of nodeshift-bump-vel when set:
+               bit for bit without a bump, within POS_TOL with one) and the
+               opposite face pinned, bit for bit; every other block untouched;
+               then, by interior:
+    line       the lines between them compressed uniformly, each on its own
+               (a replica of the law's arithmetic, within POS_TOL)
+    smooth     the four edges the replica of the line law; the solved nodes
+               (the four side faces with their in-face springs, the interior
+               with all six) in spring equilibrium in EVERY step, from the
+               snapshots out-diter = 1 writes: the residual
+               |sum_q w (d_q - d_p)| / sum_q w, w = 1/|e| on the step's old
+               nodes, at most SMOOTH_RES_TOL times the largest face
+               displacement; every node's displacement between the prescribed
+               ones (the maximum principle); a coordinate no face node moves
+               in untouched, bit for bit
 and, for every law, the nodes the blocks share still the same bits in each.
 
 Python 3.6, standard library only.
@@ -40,6 +52,7 @@ import generate  # noqa: E402  (the mesh: BLOCKS, INTERFACES, read_p3d)
 
 GCL_TOL = 1.0e-14   # relative; measured max 4.1e-16 (above)
 POS_TOL = 1.0e-15   # m, on a 0.4 m domain; measured below in the PASS lines
+SMOOTH_RES_TOL = 1.0e-11   # the equilibrium residual over the face displacement: 10 x smooth-tolerance
 
 #: the prescribed law's phases, Morph_Motion_Prescribed.f90
 PHASE = (0.0, 2.0943951023931953, 4.1887902047863905)
@@ -87,12 +100,14 @@ def read_gcl_log(path):
     return rows
 
 
-def max_diff(got, want):
-    """Largest |got - want| over every node and coordinate, and its size in ulps
-    of the coordinate where it is found."""
+def max_diff(got, want, where=None):
+    """Largest |got - want| over every node (at the keys `where(b, key)` accepts)
+    and coordinate, and its size in ulps of the coordinate where it is found."""
     worst, worst_ulp = 0.0, 0.0
     for b, (_, nodes) in enumerate(got):
         for key, x in nodes.items():
+            if where is not None and not where(b, key):
+                continue
             for c in range(3):
                 d = abs(x[c] - want[b][key][c])
                 if d > worst:
@@ -213,11 +228,19 @@ def main():
         f = int(cp.get("MORPH-Motion", "nodeshift-face"))
         dirn = (f + 1) // 2 - 1                  # 0-based grid direction of the receding lines
         side = 2 - f % 2                         # 1: the low-index face recedes, 2: the high one
-        d = [v * dt for v in vec(cp, "MORPH-Motion", "nodeshift-vel", [0.0] * 3)]
+        vel = vec(cp, "MORPH-Motion", "nodeshift-vel", [0.0] * 3)
+        bump_vel = vec(cp, "MORPH-Motion", "nodeshift-bump-vel", [0.0] * 3)
+        width = float(cp.get("MORPH-Motion", "nodeshift-bump-width", fallback="0.25"))
+        interior = cp.get("MORPH-Motion", "interior", fallback="line").strip()
+        out_diter = int(cp.get("MORPH-IO", "out-diter", fallback="0"))
+        bump = any(v != 0.0 for v in bump_vel)
         dims = generate.dims(b)
         n = dims[dirn]
+        t1, t2 = [c for c in range(3) if c != dirn]   # the transverse grid directions
         moving = 0 if side == 1 else n
         pinned = n if side == 1 else 0
+        print("        interior %s, %s" % (interior, "a bump of %g m/s, width %g" % (bump_vel[0], width) if bump
+                                           else "a uniform displacement"))
 
         def line_key(m, key):
             """the node m steps from the pinned end on the line through `key`"""
@@ -225,46 +248,163 @@ def main():
             k[dirn] = (n - m) if side == 1 else m
             return tuple(k)
 
-        # replica of Morph_Motion_Nodeshift, step by step
-        x = dict(x_in[b])
-        line_starts = [key for key in x if key[dirn] == pinned]
-        for _ in range(steps):
-            old = dict(x)
-            dd = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
-            for key0 in line_starts:
-                arc = [0.0]
-                for m in range(1, n + 1):
-                    p, q = old[line_key(m, key0)], old[line_key(m - 1, key0)]
-                    seg = [p[c] - q[c] for c in range(3)]
-                    arc.append(arc[-1] + math.sqrt(seg[0] * seg[0] + seg[1] * seg[1] + seg[2] * seg[2]))
-                L = arc[n]
-                if L - dd <= 0.0:
-                    check(False, "nodeshift: verify.py's replica consumed a line; the case is wrong")
-                    return finish()
-                for m in range(1, n + 1):
-                    key = line_key(m, key0)
-                    x[key] = tuple(old[key][c] + d[c] * (arc[m] / L) for c in range(3))
-        want = [dict(nodes) for nodes in x_in]
-        want[b] = x
-        # the surface: x_in + d once per step, exactly (s/L = 1 bitwise in the law)
+        def disp(key):
+            """this step's displacement of the surface node of the line through
+            `key`: Set_Shift's arithmetic (main.f90), the old expression without a bump"""
+            if not bump:
+                return [v * dt for v in vel]
+            r2 = 0.0
+            if dims[t1] > 1:
+                xi = key[t1] / dims[t1] - 0.5
+                r2 = r2 + xi * xi
+            if dims[t2] > 1:
+                eta = key[t2] / dims[t2] - 0.5
+                r2 = r2 + eta * eta
+            g = max(0.0, 1.0 - r2 / (width * width))
+            g = g * g
+            return [(vel[c] + bump_vel[c] * g) * dt for c in range(3)]
+
+        def is_edge(key):
+            return key[t1] in (0, dims[t1]) and key[t2] in (0, dims[t2])
+
+        def line_replica(line_starts):
+            """replica of the line law (Morph_Motion_Nodeshift), step by step, on
+            the lines through `line_starts` (nodes of the pinned face); None when
+            a line is consumed"""
+            x = dict(x_in[b])
+            for _ in range(steps):
+                old = dict(x)
+                for key0 in line_starts:
+                    d = disp(key0)
+                    dd = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+                    if dd == 0.0:
+                        continue
+                    arc = [0.0]
+                    for m in range(1, n + 1):
+                        p, q = old[line_key(m, key0)], old[line_key(m - 1, key0)]
+                        seg = [p[c] - q[c] for c in range(3)]
+                        arc.append(arc[-1] + math.sqrt(seg[0] * seg[0] + seg[1] * seg[1] + seg[2] * seg[2]))
+                    L = arc[n]
+                    if L - dd <= 0.0:
+                        return None
+                    for m in range(1, n + 1):
+                        key = line_key(m, key0)
+                        x[key] = tuple(old[key][c] + d[c] * (arc[m] / L) for c in range(3))
+            return x
+
+        # the surface: x_in + d once per step (s/L = 1 bitwise in the law)
         surf = [dict(nodes) for nodes in x_in]
         for key in surf[b]:
             if key[dirn] == moving:
+                d = disp(key)
                 y = list(surf[b][key])
                 for _ in range(steps):
                     y = [y[c] + d[c] for c in range(3)]
                 surf[b][key] = tuple(y)
-        nm, bad = same_bits(mesh_out, surf, blocks=[b], where=lambda bb, key: key[dirn] == moving)
-        check(bad == 0, "nodeshift: the %d nodes of the receding face moved by nodeshift-vel*dt per step, "
-                        "bit for bit (%d differ)" % (nm, bad))
+        on_face = lambda bb, key: key[dirn] == moving
+        if bump:
+            dmax, umax = max_diff([mesh_out[b]], [surf[b]], where=on_face)
+            check(dmax <= POS_TOL, "nodeshift: the receding face moved by its displacement per step, within %.1e m: "
+                                   "max %.2e m (%.1f ulp; the bump's arithmetic is contracted into FMAs)"
+                                   % (POS_TOL, dmax, umax))
+        else:
+            nm, bad = same_bits(mesh_out, surf, blocks=[b], where=on_face)
+            check(bad == 0, "nodeshift: the %d nodes of the receding face moved by nodeshift-vel*dt per step, "
+                            "bit for bit (%d differ)" % (nm, bad))
         npin, bad = same_bits(mesh_out, x_in, blocks=[b], where=lambda bb, key: key[dirn] == pinned)
         check(bad == 0, "nodeshift: the %d nodes of the opposite face did not move (%d differ)" % (npin, bad))
         others = [bb for bb in range(len(x_in)) if bb != b]
         no, bad = same_bits(mesh_out, x_in, blocks=others)
         check(bad == 0, "nodeshift: the %d nodes of the other blocks did not move (%d differ)" % (no, bad))
-        dmax, umax = max_diff([mesh_out[b]], [want[b]])
-        check(dmax <= POS_TOL, "nodeshift: lines compressed uniformly, within %.1e m of the replica: "
-                               "max %.2e m (%.1f ulp)" % (POS_TOL, dmax, umax))
+
+        line_starts = [key for key in x_in[b] if key[dirn] == pinned]
+        if interior == "line":
+            x = line_replica(line_starts)
+            if x is None:
+                check(False, "nodeshift: verify.py's replica consumed a line; the case is wrong")
+                return finish()
+            dmax, umax = max_diff([mesh_out[b]], [x])
+            check(dmax <= POS_TOL, "nodeshift line: every line compressed uniformly on its own, within %.1e m of "
+                                   "the replica: max %.2e m (%.1f ulp)" % (POS_TOL, dmax, umax))
+
+        elif interior == "smooth":
+            smooth_tol = float(cp.get("MORPH-Motion", "smooth-tolerance", fallback="1.0e-12"))
+            # the four edges: the line law
+            x = line_replica([key for key in line_starts if is_edge(key)])
+            if x is None:
+                check(False, "nodeshift: verify.py's replica consumed a line; the case is wrong")
+                return finish()
+            dmax, umax = max_diff([mesh_out[b]], [x], where=lambda bb, key: is_edge(key))
+            check(dmax <= POS_TOL, "nodeshift smooth: the four edges follow the line law, within %.1e m of the "
+                                   "replica: max %.2e m (%.1f ulp)" % (POS_TOL, dmax, umax))
+            # a coordinate no face node moves in is untouched
+            still = [c for c in range(3) if vel[c] == 0.0 and bump_vel[c] == 0.0]
+            nb, bad = 0, 0
+            for key, xo in mesh_out[b][1].items():
+                nb += 1
+                if any(xo[c] != x_in[b][key][c] for c in still):
+                    bad += 1
+            check(bad == 0, "nodeshift smooth: the coordinates %s of the %d nodes did not move, bit for bit (%d differ)"
+                            % ("".join("xyz"[c] for c in still), nb, bad))
+            # every step from the snapshots: the equilibrium and the maximum principle
+            if out_diter != 1:
+                check(False, "nodeshift smooth: the per-step checks need out-diter = 1 in input.ini")
+                return finish()
+            meshes = [x_in[b]]
+            for s in range(1, steps):
+                meshes.append(generate.read_p3d(os.path.join(wd, "OUTPUT", "mesh_%d.p3d" % s))[b][1])
+            meshes.append(mesh_out[b][1])
+            worst_res, worst_step, worst_mp, spread = 0.0, 0, 0.0, 0.0
+            for s in range(1, steps + 1):
+                old, new = meshes[s - 1], meshes[s]
+                dsp = {key: tuple(new[key][c] - old[key][c] for c in range(3)) for key in new}
+                face = [key for key in new if key[dirn] == moving]
+                scale = max(max(abs(v) for v in disp(key)) for key in face)
+                lo = [min(0.0, min(disp(key)[c] for key in face)) for c in range(3)]
+                hi = [max(0.0, max(disp(key)[c] for key in face)) for c in range(3)]
+                for key in new:
+                    if key[dirn] in (moving, pinned) or is_edge(key):
+                        continue                       # prescribed
+                    on1 = key[t1] in (0, dims[t1])
+                    on2 = key[t2] in (0, dims[t2])
+                    use = {dirn: True, t1: not on1, t2: not on2}
+                    acc, sw = [0.0, 0.0, 0.0], 0.0
+                    for dd in range(3):
+                        if not use[dd]:
+                            continue
+                        for sgn in (-1, 1):
+                            q = list(key); q[dd] += sgn; q = tuple(q)
+                            e = [old[q][c] - old[key][c] for c in range(3)]
+                            w = 1.0 / math.sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2])
+                            for c in range(3):
+                                acc[c] += w * (dsp[q][c] - dsp[key][c])
+                            sw += w
+                    res = max(abs(a) for a in acc) / sw / scale
+                    if res > worst_res:
+                        worst_res, worst_step = res, s
+                    for c in range(3):
+                        worst_mp = max(worst_mp, lo[c] - dsp[key][c], dsp[key][c] - hi[c])
+                    # how far the step's field is from the line law's s/L blend at this node
+                    arc = [0.0]
+                    for m in range(1, n + 1):
+                        p, q = old[line_key(m, key)], old[line_key(m - 1, key)]
+                        seg = [p[c] - q[c] for c in range(3)]
+                        arc.append(arc[-1] + math.sqrt(seg[0] * seg[0] + seg[1] * seg[1] + seg[2] * seg[2]))
+                    m = key[dirn] if side == 2 else n - key[dirn]
+                    dl = disp(key)
+                    spread = max(spread, max(abs(dsp[key][c] - dl[c] * (arc[m] / arc[n])) for c in range(3)))
+            check(worst_res <= SMOOTH_RES_TOL,
+                  "nodeshift smooth: GATE every step's field is the spring equilibrium at every solved node, "
+                  "residual <= %.1e of the face displacement: max %.2e (step %d; smooth-tolerance %.1e)"
+                  % (SMOOTH_RES_TOL, worst_res, worst_step, smooth_tol))
+            check(worst_mp <= 10.0 * smooth_tol * scale + POS_TOL,
+                  "nodeshift smooth: every node's displacement lies between the prescribed ones (maximum "
+                  "principle): worst excess %.2e m" % worst_mp)
+            print("        the solved nodes depart from the line law's s/L blend by up to %.2e m per step" % spread)
+
+        else:
+            check(False, "verify.py knows no interior '%s'" % interior)
+            return finish()
 
     else:
         check(False, "verify.py knows no law '%s'" % law)

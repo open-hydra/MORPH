@@ -28,6 +28,7 @@ program MORPH_program
   character(len=llen)  :: snapshot
   integer(I4)          :: nthreads, step, ib, ib_abs, ib_rel, ob, oi, oj, oc, ios, ulog
   real(R8)             :: r_abs, r_rel, ratio, worst_rel, worst_abs
+  logical              :: smooth
 
 #if defined (_OPENMP)
   !$omp parallel
@@ -53,6 +54,10 @@ program MORPH_program
   call Set_Laws ( message )
   if ( len_trim(message) > 0 ) call Fail ( 1, message )
   write(*,'(A,A)')     ' -  Motion law        --> ', trim(obj_motion%law)
+  smooth = ( trim(obj_motion%law) == 'nodeshift' .and. trim(obj_motion%interior) == 'smooth' )
+  if ( trim(obj_motion%law) == 'nodeshift' ) write(*,'(A,A)') ' -  Interior          --> ', trim(obj_motion%interior)
+  if ( smooth ) write(*,'(A,ES9.2,A,I0,A,ES9.2,A)') ' -  Smoothing         --> tolerance ', obj_motion%smooth_tol, &
+                      ', maxit ', obj_motion%smooth_maxit, ', omega ', obj_motion%smooth_omega, ' (0: 2/(1 + sin(pi/N)))'
   write(*,'(A,I0,A,ES12.5,A)') ' -  Steps             --> ', obj_time%steps, ' of ', obj_time%dt, ' s'
 
   call domain%init ( obj_time%t0, status, ib )
@@ -86,9 +91,11 @@ program MORPH_program
 
     write(ulog,'(I8,1X,ES24.16E3,2(1X,ES12.5E3),1X,I5,1X,ES12.5E3)') step, domain%t, r_abs, r_rel, ib_rel, ratio
     if ( obj_io%shell_diter > 0 ) then
-      if ( mod(step, obj_io%shell_diter) == 0 .or. step == obj_time%steps ) &
+      if ( mod(step, obj_io%shell_diter) == 0 .or. step == obj_time%steps ) then
         write(*,'(A,I8,A,ES14.7,A,ES10.3,A,ES10.3)') ' step ', step, '  t = ', domain%t, &
               '  GCL rel = ', r_rel, '  outflow = ', ratio
+        if ( smooth ) call Report_Smooth ()
+      endif
     endif
 
     if ( r_rel > obj_motion%gcl_tol ) then
@@ -174,11 +181,24 @@ contains
         msg = '[ERROR] [MORPH-Motion] nodeshift-face must be 1..6 (i-low, i-high, j-low, j-high, k-low, k-high)'
         return
       endif
+      if ( obj_motion%smooth_omega >= 2.0_R8 ) then
+        msg = '[ERROR] [MORPH-Motion] smooth-omega must be below 2 (0 selects 2/(1 + sin(pi/N)))'
+        return
+      endif
       ! the BC 306 convention of FUSS (plan 08 section 2.3): faces 1/2 -> i,
       ! 3/4 -> j, 5/6 -> k; odd = the low-index face
       d = (f + 1) / 2
       deallocate( domain%blk(b)%law )
       allocate( domain%blk(b)%law, source = morph_motion_nodeshift_t( name='nodeshift', dir=d, side=2-mod(f,2) ) )
+      ! the interior: the registry has already refused a name but line and smooth
+      select type ( law => domain%blk(b)%law )
+      type is ( morph_motion_nodeshift_t )
+        law%interior = MORPH_INTERIOR_LINE
+        if ( trim(obj_motion%interior) == 'smooth' ) law%interior = MORPH_INTERIOR_SMOOTH
+        law%smooth%tol   = obj_motion%smooth_tol
+        law%smooth%maxit = obj_motion%smooth_maxit
+        law%smooth%omega = obj_motion%smooth_omega
+      end select
 
     case default
       msg = '[ERROR] [MORPH-Motion] law '//trim(obj_motion%law)//' is not known'
@@ -189,13 +209,22 @@ contains
 
 
   !> This step's displacement of the receding face: nodeshift-vel * dt at every
-  !> node of the face (FUSS forms it from the ablating wall's recession rate).
+  !> node of the face (FUSS forms it from the ablating wall's recession rate),
+  !> plus, when nodeshift-bump-vel is set, nodeshift-bump-vel * g * dt with the
+  !> bump g = (1 - r^2/width^2)^2 inside r < width and 0 outside, r the distance
+  !> of the node from the centre of the face mapped to the unit square (a
+  !> transverse direction of one cell, a 2-D mesh, does not count). verify.py
+  !> repeats this arithmetic; without a bump the expression is the old one.
   subroutine Set_Shift ( dt )
     real(R8), intent(in) :: dt
     ! Local
-    integer(I4) :: b, t1, t2, a, c
+    integer(I4) :: b, t1, t2, a, c, n1, n2
+    real(R8)    :: xi, eta, r2, g, w
+    logical     :: bump
 
-    b = obj_motion%shift_block
+    b    = obj_motion%shift_block
+    bump = any( obj_motion%shift_bump_vel /= 0.0_R8 )
+    w    = obj_motion%shift_bump_width
     select type ( law => domain%blk(b)%law )
     type is ( morph_motion_nodeshift_t )
       select case ( law%dir )
@@ -203,16 +232,44 @@ contains
         case (2) ; t1 = 1 ; t2 = 3
         case default ; t1 = 1 ; t2 = 2
       end select
-      if ( .not. allocated(law%disp) ) &
-        allocate( law%disp( 0:domain%blk(b)%dim(t1), 0:domain%blk(b)%dim(t2) ) )
-      do c = 0, domain%blk(b)%dim(t2)
-        do a = 0, domain%blk(b)%dim(t1)
-          law%disp(a,c)%c = obj_motion%shift_vel * dt
+      n1 = domain%blk(b)%dim(t1)
+      n2 = domain%blk(b)%dim(t2)
+      if ( .not. allocated(law%disp) ) allocate( law%disp( 0:n1, 0:n2 ) )
+      do c = 0, n2
+        do a = 0, n1
+          if ( bump ) then
+            r2 = 0.0_R8
+            if ( n1 > 1 ) then
+              xi = real(a,R8) / real(n1,R8) - 0.5_R8
+              r2 = r2 + xi * xi
+            endif
+            if ( n2 > 1 ) then
+              eta = real(c,R8) / real(n2,R8) - 0.5_R8
+              r2  = r2 + eta * eta
+            endif
+            g = max( 0.0_R8, 1.0_R8 - r2 / ( w * w ) )
+            g = g * g
+            law%disp(a,c)%c = ( obj_motion%shift_vel + obj_motion%shift_bump_vel * g ) * dt
+          else
+            law%disp(a,c)%c = obj_motion%shift_vel * dt
+          endif
         enddo
       enddo
     end select
 
   end subroutine Set_Shift
+
+
+  !> What the step's smoothing did, from the law of the receding block.
+  subroutine Report_Smooth ()
+    select type ( law => domain%blk(obj_motion%shift_block)%law )
+    type is ( morph_motion_nodeshift_t )
+      write(*,'(A,I0,A,I0,A,ES9.2,A,F6.3,A,F6.3)') '          smoothing: sweeps ', law%smooth_info%sweeps_face, &
+            ' (faces) + ', law%smooth_info%sweeps_interior, ' (interior), last update ', &
+            max( law%smooth_info%update_face, law%smooth_info%update_interior ), ' of the displacement, omega ', &
+            law%smooth_info%omega_face, ' / ', law%smooth_info%omega_interior
+    end select
+  end subroutine Report_Smooth
 
 
   !> mesh-out with _<step> before the extension.
@@ -245,8 +302,10 @@ contains
 
 
   !> A MORPH status, with the block MORPH does not know it is in. The status's
-  !> (i,j,k) is a cell, except for the nodeshift law's consumed line: the
-  !> line's two transverse node indices and its direction (its message says so).
+  !> (i,j,k) is a cell, except for the nodeshift law's consumed line (the
+  !> line's two transverse node indices and its direction) and the smoothing's
+  !> status 6 (the first node of the set that did not converge, or the node
+  !> whose neighbour coincides with it); the message says which.
   subroutine Fail_Status ( where, b, st )
     character(len=*),     intent(in) :: where
     integer(I4),          intent(in) :: b

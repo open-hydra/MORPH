@@ -30,6 +30,7 @@ module Morph_Types_m
   integer(I4), parameter :: MORPH_ERR_JACOBIAN   = 3  !> Jacobian sign flip (tangled cell)
   integer(I4), parameter :: MORPH_ERR_SHAPE      = 4  !> inconsistent array extents
   integer(I4), parameter :: MORPH_ERR_GCL        = 5  !> discrete GCL identity violated
+  integer(I4), parameter :: MORPH_ERR_SMOOTH     = 6  !> the interior smoothing did not converge, or two nodes coincide
 
   integer(I4), parameter :: MORPH_MSGLEN = 256
 

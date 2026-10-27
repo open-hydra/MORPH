@@ -93,6 +93,30 @@ contains
                   'nodeshift: the receding face, 1..6 = i-low, i-high, j-low, j-high, k-low, k-high', '>= 0', .false. )
     call reg%add( trim(section), 'nodeshift-vel', obj_motion%shift_vel, '0.0', &
                   'nodeshift: velocity of the nodes of the receding face [m/s]', 'real', .false. )
+    ! A displacement that varies across the face, to exercise the interior:
+    ! vel + bump-vel * (1 - r^2/width^2)^2 inside r < width, r the distance
+    ! from the face's centre over its unit square (Set_Shift in main.f90).
+    call reg%add( trim(section), 'nodeshift-bump-vel', obj_motion%shift_bump_vel, '0.0', &
+                  'nodeshift: velocity added at the centre of the receding face, times a bump of radius nodeshift-bump-width [m/s]', &
+                  'real', .false. )
+    call reg%add( trim(section), 'nodeshift-bump-width', obj_motion%shift_bump_width, '0.25', &
+                  'nodeshift: radius of the bump over the face mapped to the unit square', '> 0', .false. )
+
+    ! The interior of the receding block: Morph_Motion_Nodeshift's two options.
+    ! The default is the line law, which FUSS's regression references hold.
+    call reg%add( trim(section), 'interior', obj_motion%interior, 'line', &
+                  'nodeshift: how the nodes between the receding and the pinned face move: '// &
+                  'line (each grid line compressed uniformly) or smooth (the lineal-spring equilibrium of the face displacement)', &
+                  'line ,  smooth', .false. )
+    call reg%add( trim(section), 'smooth-tolerance', obj_motion%smooth_tol, '1.0e-12', &
+                  'interior = smooth: a set of nodes is converged when a sweep moves none of them by more than '// &
+                  'this fraction of the largest face displacement', '> 0', .false. )
+    call reg%add( trim(section), 'smooth-maxit', obj_motion%smooth_maxit, '100000', &
+                  'interior = smooth: sweeps allowed per set of nodes before MORPH returns status MORPH_ERR_SMOOTH', &
+                  '>= 1', .false. )
+    call reg%add( trim(section), 'smooth-omega', obj_motion%smooth_omega, '0.0', &
+                  'interior = smooth: the over-relaxation factor, below 2; 0 = 2/(1 + sin(pi/N)) for the extent N of the set', &
+                  '>= 0', .false. )
 
   end subroutine Register_Morph
 
