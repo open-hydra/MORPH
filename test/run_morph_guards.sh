@@ -72,10 +72,12 @@ ALL=0
 
 # The library in dependency order: Morph_Metrics uses Morph_GCL for the cell
 # volume, so GCL must be compiled first or its .mod does not exist yet; the
-# domain type uses the API. A new library file must be added here: the guards
-# that compile refuse a list that does not cover src/lib.
+# domain uses the block core, the run uses the domain, and the facade uses
+# them all. A new library file must be added here: the guards that compile
+# refuse a list that does not cover src/lib.
 LIB_SRC="
 base/Morph_Types_m.f90
+base/Morph_Events.f90
 metrics/Morph_GCL.f90
 metrics/Morph_Metrics.f90
 motion/Morph_Motion_m.f90
@@ -84,9 +86,12 @@ motion/Morph_Motion_Prescribed.f90
 motion/Morph_Motion_Translation.f90
 motion/Morph_Smooth.f90
 motion/Morph_Motion_Nodeshift.f90
+motion/Morph_Motion_Given.f90
 quality/Morph_Quality.f90
-Morph_API.f90
+core/Morph_Block_m.f90
 domain/Morph_Domain.f90
+run/Morph_Run.f90
+Morph_API.f90
 "
 APP_SRC="
 config/Morph_Config_Types.f90
@@ -95,6 +100,7 @@ config/Register_Morph.f90
 config/Morph_Backend_INI.f90
 config/Morph_Read_Ini.f90
 io/Morph_IO.f90
+io/Morph_Output.f90
 main.f90
 "
 
@@ -260,13 +266,14 @@ for guard in "${GUARDS[@]}"; do
 
   # ---------------------------------------------------------------------------
   # (e) Unit tests: the GCL identity, single cell and whole block, the
-  #     nodeshift law and its smoothed interior; 1 and 8 threads must print
-  #     the same.
+  #     nodeshift law and its smoothed interior, the event list, the given
+  #     law and the one-call run; 1 and 8 threads must print the same.
   # ---------------------------------------------------------------------------
   units)
     covers "$LIB" "$LIB_SRC" units || continue
     mkdir -p "$WORK/units"
-    for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth; do
+    for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
+                test_morph_given test_morph_run; do
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
              $(printf "$LIB/%s " $LIB_SRC) "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
         for nt in 1 8; do

@@ -58,9 +58,10 @@ contains
     !! ------------------------------------------------------
     section = codename//'-Motion'
 
-    ! The allowed list is load-bearing: the driver selects the law by name, and
-    ! Validate_Registry refuses a name not listed here. Keep it in sync with
-    ! Set_Laws in main.f90.
+    ! The allowed list is load-bearing: the driver passes the law by name to
+    ! Morph_Run, and Validate_Registry refuses a name not listed here. Keep it
+    ! in sync with the laws Morph_Run installs (install_laws in
+    ! src/lib/run/Morph_Run.f90).
     call reg%add( trim(section), 'law', obj_motion%law, 'static', &
                   'Mesh motion law', 'static ,  prescribed ,  translation ,  nodeshift', .false. )
 
@@ -95,7 +96,7 @@ contains
                   'nodeshift: velocity of the nodes of the receding face [m/s]', 'real', .false. )
     ! A displacement that varies across the face, to exercise the interior:
     ! vel + bump-vel * (1 - r^2/width^2)^2 inside r < width, r the distance
-    ! from the face's centre over its unit square (Set_Shift in main.f90).
+    ! from the face's centre over its unit square (install_laws in src/lib/run/Morph_Run.f90).
     call reg%add( trim(section), 'nodeshift-bump-vel', obj_motion%shift_bump_vel, '0.0', &
                   'nodeshift: velocity added at the centre of the receding face, times a bump of radius nodeshift-bump-width [m/s]', &
                   'real', .false. )

@@ -250,7 +250,7 @@ def main():
 
         def disp(key):
             """this step's displacement of the surface node of the line through
-            `key`: Set_Shift's arithmetic (main.f90), the old expression without a bump"""
+            `key`: install_laws's arithmetic (src/lib/run/Morph_Run.f90), the old expression without a bump"""
             if not bump:
                 return [v * dt for v in vel]
             r2 = 0.0

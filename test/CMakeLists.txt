@@ -1,15 +1,16 @@
 # MORPH's test suite:  ctest --test-dir <build> [-L unit|guard|driver] [-j 2]
 #
-#   unit    the three unit programs MORPH came with (test/unit) and the one of
-#           the smoothed interior, built on MORPHL, at 1 and 8 threads, and the
-#           two outputs compared
+#   unit    the unit programs (test/unit): the three MORPH came with, the
+#           smoothed interior, the event list, the given law and the one-call
+#           run; built on MORPHL, at 1 and 8 threads, and the two outputs
+#           compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
 #           build-configuration check, and MORPHL embedded in another project
 #   driver  bin/MORPH on the three-block mesh of driver/multiblock: one run per
 #           motion law and per nodeshift variant (interior line or smooth, a
 #           uniform or a bumped face displacement) at 1 and 8 threads, gated on
 #           the per-step discrete-GCL residual and checked node by node
-#           (verify.py), the two outputs compared, and five runs the driver
+#           (verify.py), the two outputs compared, and six runs the driver
 #           must refuse
 #
 # An 8-thread test asks ctest for 8 processors (PROCESSORS), so `ctest -j N`
@@ -29,7 +30,8 @@ endif()
 # ---------------------------------------------------------------------------
 # unit
 # ---------------------------------------------------------------------------
-foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth)
+foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth test_morph_events
+             test_morph_given test_morph_run)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
@@ -126,8 +128,9 @@ foreach(law static translation prescribed nodeshift nodeshift-smooth nodeshift-b
   endif()
 endforeach()
 
-# Runs the driver must refuse, one per exit status: 1 input, 2 a MORPH status,
-# 3 the per-step GCL assertion (main.f90)
+# Runs the driver must refuse, by exit status: 1 input (the motion parameters
+# included, which Morph_Run refuses), 2 a MORPH status in a step (not in the
+# setup: the pattern says which), 3 the per-step GCL tolerance of Morph_Run
 function(morph_refusal name ini code pattern)
   add_test(NAME driver_${name}
            COMMAND bash ${MORPH_RUN_CASE} ${MORPH_CASE} ${ini} ${MORPH_RUN_DIR}/driver/${name} 1
@@ -137,6 +140,7 @@ endfunction()
 
 morph_refusal(refuses_unknown_key   input-refuse-unknown.ini  1 "unknown option in input.ini: \\[MORPH-Motion\\] velocity")
 morph_refusal(refuses_value_count   input-refuse-count.ini    1 "\\[MORPH-Motion\\] vel has 2 value\\(s\\), 3 expected")
-morph_refusal(refuses_consumed_line input-refuse-consumed.ini 2 "failed in block 1, status [0-9]+ .*consumes a whole grid line")
-morph_refusal(refuses_smooth_maxit  input-refuse-smooth-maxit.ini 2 "failed in block 1, status 6 .*smoothing: not converged in 1 sweeps")
+morph_refusal(refuses_shift_block   input-refuse-block.ini    1 "\\[MORPH-Motion\\] run: nodeshift block 4 is not a block of the domain")
+morph_refusal(refuses_consumed_line input-refuse-consumed.ini 2 "MORPH step failed in block 1, status [0-9]+ .*consumes a whole grid line")
+morph_refusal(refuses_smooth_maxit  input-refuse-smooth-maxit.ini 2 "MORPH step failed in block 1, status 9 .*smoothing: not converged in 1 sweeps")
 morph_refusal(refuses_gcl_residual  input-refuse-gcl.ini      3 "step 1: discrete GCL residual .* exceeds gcl-tolerance")

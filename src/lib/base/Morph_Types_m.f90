@@ -30,7 +30,10 @@ module Morph_Types_m
   integer(I4), parameter :: MORPH_ERR_JACOBIAN   = 3  !> Jacobian sign flip (tangled cell)
   integer(I4), parameter :: MORPH_ERR_SHAPE      = 4  !> inconsistent array extents
   integer(I4), parameter :: MORPH_ERR_GCL        = 5  !> discrete GCL identity violated
-  integer(I4), parameter :: MORPH_ERR_SMOOTH     = 6  !> the interior smoothing did not converge, or two nodes coincide
+  integer(I4), parameter :: MORPH_ERR_INPUT      = 6  !> inconsistent input data (boundary file, connections, planes)
+  integer(I4), parameter :: MORPH_ERR_STATE      = 7  !> a restart state that does not match the mesh or the version
+  integer(I4), parameter :: MORPH_ERR_EXCHANGE   = 8  !> the caller's exchange (MPI or simulated ranks) failed
+  integer(I4), parameter :: MORPH_ERR_SMOOTH     = 9  !> the interior smoothing did not converge, or two nodes coincide
 
   integer(I4), parameter :: MORPH_MSGLEN = 256
 
@@ -56,6 +59,13 @@ module Morph_Types_m
     type(morph_face_t), allocatable :: f(:,:,:)
   end type morph_dir_t
 
+  !> One value per node of one block, node(0:dim(1), 0:dim(2), 0:dim(3)): the
+  !> container for per-block node fields that cross module boundaries
+  !> (target positions, displacements).
+  type :: morph_nodefield_t
+    type(morph_vec3_t), allocatable :: v(:,:,:)
+  end type morph_nodefield_t
+
   !! ------------------------------------------------------
   !! Status
   !! ------------------------------------------------------
@@ -63,6 +73,7 @@ module Morph_Types_m
     integer(I4)                  :: code = MORPH_OK
     character(len=MORPH_MSGLEN)  :: message = ''
     integer(I4)                  :: i = 0, j = 0, k = 0   !> offending cell, 0 if not cell-local
+    integer(I4)                  :: b = 0                 !> offending block, 0 if not block-local
   contains
     procedure :: ok    => morph_status_ok
     procedure :: fail  => morph_status_fail
@@ -115,17 +126,17 @@ contains
     class(morph_status_t), intent(inout) :: self
     self%code = MORPH_OK
     self%message = ''
-    self%i = 0; self%j = 0; self%k = 0
+    self%i = 0; self%j = 0; self%k = 0; self%b = 0
   end subroutine morph_status_clear
 
 
   !> Record a failure. First failure wins, so a loop can call this without
   !> masking the earliest (and usually most diagnostic) problem.
-  pure subroutine morph_status_fail ( self, code, message, i, j, k )
+  pure subroutine morph_status_fail ( self, code, message, i, j, k, b )
     class(morph_status_t), intent(inout) :: self
     integer(I4),           intent(in)    :: code
     character(len=*),      intent(in)    :: message
-    integer(I4), optional, intent(in)    :: i, j, k
+    integer(I4), optional, intent(in)    :: i, j, k, b
 
     if ( self%code /= MORPH_OK ) return   ! keep the first failure
 
@@ -134,6 +145,7 @@ contains
     if ( present(i) ) self%i = i
     if ( present(j) ) self%j = j
     if ( present(k) ) self%k = k
+    if ( present(b) ) self%b = b
   end subroutine morph_status_fail
 
 end module Morph_Types_m

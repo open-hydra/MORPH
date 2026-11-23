@@ -1,8 +1,12 @@
 !>@brief The mesh-motion law abstraction.
 !>
-!> A motion law is the ONLY thing that decides where nodes go. Everything else
-!> in MORPH -- metrics, swept volumes, the GCL identity, quality checks -- is
-!> written against node positions and is therefore independent of the law.
+!> A motion law is the ONLY thing that moves nodes. Everything else in MORPH --
+!> metrics, swept volumes, the GCL identity, quality checks -- is written
+!> against node positions and is therefore independent of the law. Where the
+!> positions come from a domain-level layer (the regression: level set and
+!> multi-block volume law), that layer decides them and the
+!> `given` law (Morph_Motion_Given) applies them block by block, so this path
+!> stays the only one that moves nodes.
 !>
 !> That separation is what makes the later phases cheap:
 !>   * plan 08 drives surface recession by supplying a displacement to
