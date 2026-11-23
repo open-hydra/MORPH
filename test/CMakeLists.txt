@@ -1,14 +1,17 @@
 # MORPH's test suite:  ctest --test-dir <build> [-L unit|guard|driver] [-j 2]
 #
 #   unit    the unit programs (test/unit): the three MORPH came with, the
-#           event list, the given law and the one-call run; built on MORPHL,
-#           at 1 and 8 threads, and the two outputs compared
+#           smoothed interior, the event list, the given law and the one-call
+#           run; built on MORPHL, at 1 and 8 threads, and the two outputs
+#           compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
 #           build-configuration check, and MORPHL embedded in another project
 #   driver  bin/MORPH on the three-block mesh of driver/multiblock: one run per
-#           motion law at 1 and 8 threads, gated on the per-step discrete-GCL
-#           residual and checked node by node (verify.py), the two outputs
-#           compared, and five runs the driver must refuse
+#           motion law and per nodeshift variant (interior line or smooth, a
+#           uniform or a bumped face displacement) at 1 and 8 threads, gated on
+#           the per-step discrete-GCL residual and checked node by node
+#           (verify.py), the two outputs compared, and seven runs the driver
+#           must refuse
 #
 # An 8-thread test asks ctest for 8 processors (PROCESSORS), so `ctest -j N`
 # does not oversubscribe a shared machine. In a serial build (USE_OPENMP OFF)
@@ -27,8 +30,8 @@ endif()
 # ---------------------------------------------------------------------------
 # unit
 # ---------------------------------------------------------------------------
-foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_events test_morph_given
-             test_morph_run)
+foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth test_morph_events
+             test_morph_given test_morph_run)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
@@ -101,12 +104,33 @@ endif()
 set(MORPH_CASE     ${MORPH_TEST_DIR}/driver/multiblock)
 set(MORPH_RUN_CASE ${MORPH_TEST_DIR}/driver/run_case.sh)
 
-foreach(law static translation prescribed nodeshift)
+# nodeshift-smooth: the uniform recession with the smoothed interior (it must
+# reproduce the line law); nodeshift-bump: a face displacement that varies
+# across the face, smoothed (the equilibrium checks); nodeshift-bump-line: the
+# same displacement under the line law (the replica)
+#
+# Besides verify.py's checks, run.log must show (run_case.sh, exit 0 and the
+# patterns): the interior of a nodeshift run and, when it is smoothed, the
+# smoothing's settings and its report under the step lines (src/app/main.f90,
+# src/app/io/Morph_Output.f90)
+set(MORPH_LINE_INTERIOR_LINE   "^ -  Interior +--> line$")
+set(MORPH_LINE_INTERIOR_SMOOTH "^ -  Interior +--> smooth$")
+set(MORPH_LINE_SMOOTHING       "^ -  Smoothing +--> tolerance +[0-9.]+E[-+][0-9]+, maxit [0-9]+, omega ")
+set(MORPH_LINE_SMOOTH_REPORT   "^ +smoothing: sweeps [0-9]+ \\(faces\\) \\+ [0-9]+ \\(interior\\), last update ")
+set(MORPH_SHOWS_nodeshift           ${MORPH_LINE_INTERIOR_LINE})
+set(MORPH_SHOWS_nodeshift-bump-line ${MORPH_LINE_INTERIOR_LINE})
+set(MORPH_SHOWS_nodeshift-smooth    ${MORPH_LINE_INTERIOR_SMOOTH} ${MORPH_LINE_SMOOTHING} ${MORPH_LINE_SMOOTH_REPORT})
+set(MORPH_SHOWS_nodeshift-bump      ${MORPH_LINE_INTERIOR_SMOOTH} ${MORPH_LINE_SMOOTHING} ${MORPH_LINE_SMOOTH_REPORT})
+foreach(law static translation prescribed nodeshift nodeshift-smooth nodeshift-bump nodeshift-bump-line)
+  set(shows)
+  if(DEFINED MORPH_SHOWS_${law})
+    set(shows 0 ${MORPH_SHOWS_${law}})
+  endif()
   foreach(nt ${MORPH_THREADS})
     set(t driver_${law}_omp${nt})
     add_test(NAME ${t}
              COMMAND bash ${MORPH_RUN_CASE} ${MORPH_CASE} input-${law}.ini
-                          ${MORPH_RUN_DIR}/driver/${law}-omp${nt} ${nt} $<TARGET_FILE:${solver}>)
+                          ${MORPH_RUN_DIR}/driver/${law}-omp${nt} ${nt} $<TARGET_FILE:${solver}> ${shows})
     set_tests_properties(${t} PROPERTIES LABELS driver PROCESSORS ${nt} FIXTURES_SETUP ${t}
                          ENVIRONMENT "PYTHON=${Python3_EXECUTABLE}")
   endforeach()
@@ -135,4 +159,6 @@ morph_refusal(refuses_unknown_key   input-refuse-unknown.ini  1 "unknown option 
 morph_refusal(refuses_value_count   input-refuse-count.ini    1 "\\[MORPH-Motion\\] vel has 2 value\\(s\\), 3 expected")
 morph_refusal(refuses_shift_block   input-refuse-block.ini    1 "\\[MORPH-Motion\\] run: nodeshift block 4 is not a block of the domain")
 morph_refusal(refuses_consumed_line input-refuse-consumed.ini 2 "MORPH step failed in block 1, status [0-9]+ .*consumes a whole grid line")
+morph_refusal(refuses_smooth_omega  input-refuse-smooth-omega.ini 1 "\\[MORPH-Motion\\] run: smooth omega +2\\.000E\\+00 must be below 2")
+morph_refusal(refuses_smooth_maxit  input-refuse-smooth-maxit.ini 2 "MORPH step failed in block 1, status 9 .*smoothing: not converged in 1 sweeps.*tolerance +1\\.00E-10")
 morph_refusal(refuses_gcl_residual  input-refuse-gcl.ini      3 "step 1: discrete GCL residual .* exceeds gcl-tolerance")

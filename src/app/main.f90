@@ -12,7 +12,8 @@
 !> MORPH the library never stops; this program is its caller and does, with a
 !> status that says why:
 !>   1  input (input.ini, the mesh file, the motion parameters, writing the mesh)
-!>   2  MORPH returned an error (inverted cell, singular metric, line consumed)
+!>   2  MORPH returned an error (inverted cell, singular metric, line consumed,
+!>      smoothing not converged)
 !>   3  the discrete GCL residual of a step exceeded gcl-tolerance
 program MORPH_program
 #if defined (_OPENMP)
@@ -32,6 +33,7 @@ program MORPH_program
   type(morph_output_t)     :: output
   character(len=4096)      :: message
   integer(I4)              :: nthreads
+  logical                  :: smooth
 
 #if defined (_OPENMP)
   !$omp parallel
@@ -54,6 +56,10 @@ program MORPH_program
   if ( len_trim(message) > 0 ) call Fail ( 1, message )
   write(*,'(A,I0,A,A)') ' -  Mesh              --> ', domain%nblocks, ' block(s) from ', trim(obj_io%mesh_in)
   write(*,'(A,A)')     ' -  Motion law        --> ', trim(obj_motion%law)
+  smooth = ( trim(obj_motion%law) == 'nodeshift' .and. trim(obj_motion%interior) == 'smooth' )
+  if ( trim(obj_motion%law) == 'nodeshift' ) write(*,'(A,A)') ' -  Interior          --> ', trim(obj_motion%interior)
+  if ( smooth ) write(*,'(A,ES9.2,A,I0,A,ES9.2,A)') ' -  Smoothing         --> tolerance ', obj_motion%smooth_tol, &
+                      ', maxit ', obj_motion%smooth_maxit, ', omega ', obj_motion%smooth_omega, ' (0: 2/(1 + sin(pi/N)))'
   write(*,'(A,I0,A,ES12.5,A)') ' -  Steps             --> ', obj_time%steps, ' of ', obj_time%dt, ' s'
 
   run%law         = obj_motion%law(1:len(run%law))   ! the names Register_Morph allows all fit
@@ -71,6 +77,17 @@ program MORPH_program
   run%shift_block = obj_motion%shift_block
   run%shift_face  = obj_motion%shift_face
   run%shift_vel   = obj_motion%shift_vel
+  run%shift_bump_vel   = obj_motion%shift_bump_vel
+  run%shift_bump_width = obj_motion%shift_bump_width
+  run%interior         = MORPH_INTERIOR_LINE              ! the registry allows line and smooth only
+  if ( trim(obj_motion%interior) == 'smooth' ) run%interior = MORPH_INTERIOR_SMOOTH
+  run%smooth_tol       = obj_motion%smooth_tol
+  run%smooth_maxit     = obj_motion%smooth_maxit
+  run%smooth_omega     = obj_motion%smooth_omega
+
+  ! The observer reports the smoothing of the receding block under each step line
+  output%smooth      = smooth
+  output%shift_block = obj_motion%shift_block
 
   ! ---- The run: one call
   call Morph_Run ( domain, run, report, status, output )
@@ -109,8 +126,10 @@ program MORPH_program
 contains
 
   !> A MORPH status, in its block status%b. The status's (i,j,k) is a cell,
-  !> except for the nodeshift law's consumed line: the line's two transverse
-  !> node indices and its direction (its message says so).
+  !> except for the nodeshift law's consumed line (the line's two transverse
+  !> node indices and its direction) and the smoothing's MORPH_ERR_SMOOTH (the
+  !> first node of the set that did not converge, or the node whose neighbour
+  !> coincides with it); the message says which.
   subroutine Fail_Status ( where, st )
     character(len=*),     intent(in) :: where
     type(morph_status_t), intent(in) :: st

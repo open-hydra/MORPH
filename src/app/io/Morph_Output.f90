@@ -6,7 +6,8 @@
 !> is here. The settings are the driver's [MORPH-IO] and [MORPH-Time].
 module Morph_Output_m
   use iso_fortran_env,      only: I4 => int32, output_unit
-  use Morph_API,            only: morph_domain_t, morph_run_observer_t, morph_run_step_t
+  use Morph_API,            only: morph_domain_t, morph_run_observer_t, morph_run_step_t, &
+                                  morph_motion_nodeshift_t
   use Morph_Config_Types_m, only: obj_io, obj_time, llen
   use Morph_IO_m,           only: Write_Mesh
 
@@ -19,6 +20,8 @@ module Morph_Output_m
   type, extends(morph_run_observer_t) :: morph_output_t
     integer(I4) :: ulog   = 0
     logical     :: opened = .false.
+    logical     :: smooth      = .false.   !> nodeshift with interior = smooth: the smoothing's report under each step line
+    integer(I4) :: shift_block = 0         !> the receding block, whose law holds that report
   contains
     procedure :: on_step   => output_on_step
     procedure :: close_log => output_close_log
@@ -27,8 +30,9 @@ module Morph_Output_m
 contains
 
   !> Step 0: open gcl-log and write its header. Step k: its log row, a step
-  !> line every shell-diter steps and at the last, and a snapshot every
-  !> out-diter steps before the last, unless MORPH refused the step.
+  !> line every shell-diter steps and at the last (followed by the smoothing's
+  !> report under interior = smooth), and a snapshot every out-diter steps
+  !> before the last, unless MORPH refused the step.
   subroutine output_on_step ( self, domain, info )
     class(morph_output_t),  intent(inout) :: self
     type(morph_domain_t),   intent(in)    :: domain
@@ -56,9 +60,11 @@ contains
     write(self%ulog,'(I8,1X,ES24.16E3,2(1X,ES12.5E3),1X,I5,1X,ES12.5E3)') info%step, domain%t, &
           info%gcl_abs, info%gcl_rel, info%gcl_block, info%outflow
     if ( obj_io%shell_diter > 0 ) then
-      if ( mod(info%step, obj_io%shell_diter) == 0 .or. info%step == obj_time%steps ) &
+      if ( mod(info%step, obj_io%shell_diter) == 0 .or. info%step == obj_time%steps ) then
         write(*,'(A,I8,A,ES14.7,A,ES10.3,A,ES10.3)') ' step ', info%step, '  t = ', domain%t, &
               '  GCL rel = ', info%gcl_rel, '  outflow = ', info%outflow
+        if ( self%smooth ) call Report_Smooth ( domain, self%shift_block )
+      endif
     endif
 
     ! The run stops after a refused step: no snapshot of it
@@ -73,6 +79,20 @@ contains
     endif
 
   end subroutine output_on_step
+
+
+  !> What the step's smoothing did, from the law of the receding block b.
+  subroutine Report_Smooth ( domain, b )
+    type(morph_domain_t), intent(in) :: domain
+    integer(I4),          intent(in) :: b
+    select type ( law => domain%blk(b)%law )
+    type is ( morph_motion_nodeshift_t )
+      write(*,'(A,I0,A,I0,A,ES9.2,A,F6.3,A,F6.3)') '          smoothing: sweeps ', law%smooth_info%sweeps_face, &
+            ' (faces) + ', law%smooth_info%sweeps_interior, ' (interior), last update ', &
+            max( law%smooth_info%update_face, law%smooth_info%update_interior ), ' of the displacement, omega ', &
+            law%smooth_info%omega_face, ' / ', law%smooth_info%omega_interior
+    end select
+  end subroutine Report_Smooth
 
 
   subroutine output_close_log ( self )

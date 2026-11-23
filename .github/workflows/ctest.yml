@@ -1,0 +1,75 @@
+name: CTest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # A merge queue for main waits for the required checks on each merge
+  # group, and GitHub Actions starts a workflow for a merge group only on
+  # this event.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+  workflow_dispatch:
+
+# The job reads the repository and writes nothing to GitHub: a read-only
+# token.
+permissions:
+  contents: read
+
+env:
+  # ORION v1.7.0, the version MORPH was accepted against (README, Build), and
+  # FiNeR v2.2.0 plus one commit. install.sh build clones FiNeR's five
+  # dependencies at their own pinned commits.
+  ORION_URL: https://github.com/MarcoGrossi92/ORION
+  ORION_SHA: 5c32b7342142c84b5d733efa215e97caa7bdfac0
+  FINER_URL: https://github.com/szaghi/FiNeR
+  FINER_SHA: 09adb98a11fd8d10a28bd759f0fadad044b2d962
+
+jobs:
+  test:
+    # A named Ubuntu release, not ubuntu-latest, which GitHub moves to newer
+    # releases: the release of the job changes only with this line.
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        # cmake, git and python3 come with the image; the driver tests use
+        # python3's standard library only
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran
+
+      - name: Fetch ORION and FiNeR at their pinned commits
+        run: |
+          git clone -q "$ORION_URL" "$RUNNER_TEMP/ORION"
+          git -C "$RUNNER_TEMP/ORION" checkout -q "$ORION_SHA"
+          git clone -q "$FINER_URL" "$RUNNER_TEMP/FiNeR"
+          git -C "$RUNNER_TEMP/FiNeR" checkout -q "$FINER_SHA"
+          echo "ORION $(git -C "$RUNNER_TEMP/ORION" rev-parse HEAD)"
+          echo "FiNeR $(git -C "$RUNNER_TEMP/FiNeR" rev-parse HEAD)"
+
+      - name: Build
+        # Wipes build/, puts FiNeR's dependencies at their pins, builds with
+        # the release flags and OpenMP, writes CMakePresets.json
+        run: |
+          gfortran --version | head -n 1
+          ./install.sh build --compilers=gnu --use-openmp \
+            --include-orion="$RUNNER_TEMP/ORION" --include-finer="$RUNNER_TEMP/FiNeR"
+
+      - name: Check the tests registered
+        # 57 in an OpenMP build (README, Test). Without python3 >= 3.6 CMake
+        # drops the 28 driver tests with only a warning; this step fails then.
+        # Raise the floor when tests are added.
+        run: |
+          n=$(ctest --test-dir build -N | sed -n 's/^Total Tests: //p')
+          echo "tests registered: $n"
+          test "$n" -ge 57
+
+      - name: Run tests
+        # Every test the build registers: unit, guard and driver
+        run: ctest --test-dir build --output-on-failure --timeout 600 -j $(nproc)

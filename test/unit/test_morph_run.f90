@@ -8,14 +8,21 @@
 !>     law and every prescribed parameter, the taper included;
 !>   * the nodeshift face: faces 1 and 6, on the first and on the last block,
 !>     give the direction and the side written here by hand;
+!>   * the smoothed interior: run%interior and the three smoothing controls
+!>     reach the law (against the loop with the law set by hand, bit for bit),
+!>     and one sweep allowed stops step 1 with MORPH_ERR_SMOOTH;
+!>   * the bump: the face displacement at the centre of the face (velocity
+!>     plus bump), at a corner outside the bump (velocity alone) and at a node
+!>     in between, with no transverse part;
 !>   * the observer: step 0 once the run has started, then each step once it
 !>     is taken, the refused one included and marked;
 !>   * the tolerance: a residual equal to it is accepted, one above it stops the
 !>     run after that step with MORPH_ERR_GCL and the residual's block;
 !>   * the failures: in the start (report%step 0, the observer never called)
 !>     and in a step (report%step k, no call for it), the block in status%b;
-!>   * the input: an unknown law, a block or a face out of range refused with
-!>     MORPH_ERR_INPUT, the laws left as they were; the bounds accepted;
+!>   * the input: an unknown law, a block or a face out of range, a smooth
+!>     omega of 2 refused with MORPH_ERR_INPUT, the laws left as they were;
+!>     the bounds accepted, the largest smooth omega below 2 among them;
 !>   * zero steps: the laws installed, the observer called once, at step 0;
 !>   * a static run after a moving one, without an observer: nothing moves.
 module test_morph_run_recorder
@@ -78,8 +85,8 @@ program test_morph_run
   type(morph_run_report_t) :: rep
   type(morph_status_t)     :: st
   type(recorder_t)         :: rec
-  real(R8)    :: worst_rel, worst_abs, gcl(8)
-  logical     :: ok, installed
+  real(R8)    :: worst_rel, worst_abs, gcl(8), centre, corner, edge
+  logical     :: ok, installed, transverse
 
   ok = .true.
   write(*,'(A)') '== Morph one-call run test =='
@@ -122,6 +129,18 @@ program test_morph_run
   call compare ( run, 'nodeshift, last block, face 6' )
   run%shift_block = 1 ; run%shift_face = 1 ; run%shift_vel = [2.5_R8, 0.0_R8, 0.0_R8]
   call compare ( run, 'nodeshift, block 1, face 1' )
+
+  ! 4b. the same face with the smoothed interior and controls of its own, then
+  !     one sweep allowed
+  run%interior = MORPH_INTERIOR_SMOOTH
+  run%smooth_tol = 1.0e-9_R8 ; run%smooth_maxit = 5000 ; run%smooth_omega = 1.5_R8
+  call compare ( run, 'nodeshift, block 1, face 1, smoothed interior' )
+  call make_domain ( dom, .false. )
+  run%smooth_maxit = 1
+  call rec%reset()
+  call Morph_Run ( dom, run, rep, st, rec )
+  call expect ( st%code == MORPH_ERR_SMOOTH .and. st%b == 1 .and. rep%step == 1 .and. dom%step == 0, &
+                'smoothed interior, one sweep allowed: MORPH_ERR_SMOOTH in step 1, block 1' )
 
   ! 5. a step above the tolerance
   call make_domain ( dom, .false. )
@@ -178,6 +197,9 @@ program test_morph_run
   call refused ( bad, 'nodeshift face 0' )
   bad%shift_face = 7
   call refused ( bad, 'nodeshift face 7' )
+  bad%shift_face = 1
+  bad%smooth_omega = 2.0_R8
+  call refused ( bad, 'smooth omega 2' )
 
   ! 9. zero steps
   call make_domain ( dom, .false. )
@@ -195,6 +217,29 @@ program test_morph_run
     installed = allocated( law%disp )
   end select
   call expect ( installed .and. dom%blk(2)%law%name == 'static', 'zero steps: the laws installed all the same' )
+
+  ! 9b. the bump on block 1's face 1 (3x3 nodes, the centre at (1,1)) and the
+  !     largest smooth omega below 2, with zero steps
+  call make_domain ( dom, .false. )
+  run = morph_run_t()
+  run%law = 'nodeshift' ; run%dt = 1.0e-3_R8 ; run%steps = 0
+  run%shift_block = 1 ; run%shift_face = 1 ; run%shift_vel = [2.5_R8, 0.0_R8, 0.0_R8]
+  run%shift_bump_vel = [2.0_R8, 0.0_R8, 0.0_R8] ; run%shift_bump_width = 0.6_R8
+  run%smooth_omega = nearest( 2.0_R8, -1.0_R8 )
+  call Morph_Run ( dom, run, rep, st )
+  call expect ( st%ok(), 'smooth omega: the largest number below 2 accepted' )
+  centre = -1.0_R8 ; corner = -1.0_R8 ; edge = -1.0_R8 ; transverse = .false.
+  select type ( law => dom%blk(1)%law )
+  type is ( morph_motion_nodeshift_t )
+    centre = law%disp(1,1)%c(1)
+    corner = law%disp(0,0)%c(1)
+    edge   = law%disp(1,0)%c(1)
+    transverse = all( law%disp(:,:)%c(2) == 0.0_R8 ) .and. all( law%disp(:,:)%c(3) == 0.0_R8 )
+  end select
+  call expect ( centre == (2.5_R8 + 2.0_R8) * 1.0e-3_R8, 'bump: the centre of the face by (vel + bump-vel)*dt' )
+  call expect ( corner == 2.5_R8 * 1.0e-3_R8, 'bump: a corner, outside the bump, by vel*dt' )
+  call expect ( edge > corner .and. edge < centre, 'bump: a node inside the bump, off the centre, in between' )
+  call expect ( transverse, 'bump: no transverse displacement' )
 
   ! 10. static after translation, without an observer
   call make_domain ( dom, .false. )
@@ -310,6 +355,10 @@ contains
       select type ( law => d%blk(b)%law )
       type is ( morph_motion_nodeshift_t )
         allocate( law%disp( 0:d%blk(b)%dim(t1), 0:d%blk(b)%dim(t2) ) )
+        law%interior     = r%interior
+        law%smooth%tol   = r%smooth_tol
+        law%smooth%maxit = r%smooth_maxit
+        law%smooth%omega = r%smooth_omega
       end select
     case default
       error stop 'manual: translation, prescribed and nodeshift only'

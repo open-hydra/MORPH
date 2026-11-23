@@ -33,6 +33,7 @@ module Morph_Types_m
   integer(I4), parameter :: MORPH_ERR_INPUT      = 6  !> inconsistent input data (boundary file, connections, planes)
   integer(I4), parameter :: MORPH_ERR_STATE      = 7  !> a restart state that does not match the mesh or the version
   integer(I4), parameter :: MORPH_ERR_EXCHANGE   = 8  !> the caller's exchange (MPI or simulated ranks) failed
+  integer(I4), parameter :: MORPH_ERR_SMOOTH     = 9  !> the interior smoothing did not converge, or two nodes coincide
 
   integer(I4), parameter :: MORPH_MSGLEN = 256
 

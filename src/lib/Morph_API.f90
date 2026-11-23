@@ -30,6 +30,8 @@ module Morph_API
   use Morph_Motion_Prescribed, only: morph_motion_prescribed_t
   use Morph_Motion_Translation,only: morph_motion_translation_t
   use Morph_Motion_Nodeshift,  only: morph_motion_nodeshift_t
+  use Morph_Smooth,            only: morph_smooth_ctl_t, morph_smooth_info_t, &
+                                     MORPH_INTERIOR_LINE, MORPH_INTERIOR_SMOOTH
   use Morph_Motion_Given,      only: morph_motion_given_t            ! positions decided elsewhere
   use Morph_Events                                                   ! event codes and lists
   use Morph_Block_m,           only: Morph_Init, Morph_Update        ! the block core
@@ -45,6 +47,8 @@ module Morph_API
   public :: morph_geom_t, morph_status_t
   public :: morph_motion_t, morph_motion_static_t, morph_motion_prescribed_t
   public :: morph_motion_translation_t, morph_motion_nodeshift_t
+  public :: morph_smooth_ctl_t, morph_smooth_info_t        ! the nodeshift law's smoothed interior
+  public :: MORPH_INTERIOR_LINE, MORPH_INTERIOR_SMOOTH
   public :: morph_domain_t, morph_block_t
   public :: morph_run_t, morph_run_step_t, morph_run_report_t, morph_run_observer_t
   public :: morph_motion_given_t, morph_nodefield_t
@@ -56,7 +60,7 @@ module Morph_API
   ! Status codes
   public :: MORPH_OK, MORPH_ERR_SINGULAR, MORPH_ERR_NEGVOL, MORPH_ERR_JACOBIAN
   public :: MORPH_ERR_SHAPE, MORPH_ERR_GCL
-  public :: MORPH_ERR_INPUT, MORPH_ERR_STATE, MORPH_ERR_EXCHANGE
+  public :: MORPH_ERR_INPUT, MORPH_ERR_STATE, MORPH_ERR_EXCHANGE, MORPH_ERR_SMOOTH
 
   ! Entry points
   public :: Morph_Init

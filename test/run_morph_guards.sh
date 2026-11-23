@@ -84,6 +84,7 @@ motion/Morph_Motion_m.f90
 motion/Morph_Motion_Static.f90
 motion/Morph_Motion_Prescribed.f90
 motion/Morph_Motion_Translation.f90
+motion/Morph_Smooth.f90
 motion/Morph_Motion_Nodeshift.f90
 motion/Morph_Motion_Given.f90
 quality/Morph_Quality.f90
@@ -265,14 +266,14 @@ for guard in "${GUARDS[@]}"; do
 
   # ---------------------------------------------------------------------------
   # (e) Unit tests: the GCL identity, single cell and whole block, the
-  #     nodeshift law, the event list, the given law and the one-call run;
-  #     1 and 8 threads must print the same.
+  #     nodeshift law and its smoothed interior, the event list, the given
+  #     law and the one-call run; 1 and 8 threads must print the same.
   # ---------------------------------------------------------------------------
   units)
     covers "$LIB" "$LIB_SRC" units || continue
     mkdir -p "$WORK/units"
-    for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_events test_morph_given \
-                test_morph_run; do
+    for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
+                test_morph_given test_morph_run; do
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
              $(printf "$LIB/%s " $LIB_SRC) "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
         for nt in 1 8; do
