@@ -125,7 +125,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 56 tests in an OpenMP build
+ctest --test-dir build -j 2              # 57 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -136,7 +136,7 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 |---|---|---|
 | `unit` | 21 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given` and `test_morph_run` at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
-| `driver` | 27 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus six runs that must be refused |
+| `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
 or below 1e-14 relative. FUSS's moving cases give ~1e-15; the measured maximum on this mesh is 4.1e-16
@@ -177,8 +177,8 @@ The refused runs cover each exit status of the driver:
 
 | exit status | refused run |
 |---|---|
-| 1 | an unknown key; a three-component key given two values; a `nodeshift-block` that names no block (refused by `Morph_Run`) |
-| 2 | a nodeshift that consumes a whole grid line; a smoothing allowed one sweep (`smooth-maxit = 1`, status 9) -- MORPH statuses |
+| 1 | an unknown key; a three-component key given two values; a `nodeshift-block` that names no block and a `smooth-omega` of 2 (both refused by `Morph_Run`) |
+| 2 | a nodeshift that consumes a whole grid line; a smoothing allowed one sweep (`smooth-maxit = 1`, status 9, its message showing the `smooth-tolerance` of the input) -- MORPH statuses |
 | 3 | a `gcl-tolerance` below round-off |
 
 `guard_build-config` is skipped in a tree that is not the preset's `build/`. `wall-clean-app` drops one
