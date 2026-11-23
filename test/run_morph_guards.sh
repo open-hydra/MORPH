@@ -76,6 +76,7 @@ ALL=0
 # that compile refuse a list that does not cover src/lib.
 LIB_SRC="
 base/Morph_Types_m.f90
+base/Morph_Events.f90
 metrics/Morph_GCL.f90
 metrics/Morph_Metrics.f90
 motion/Morph_Motion_m.f90
@@ -83,6 +84,7 @@ motion/Morph_Motion_Static.f90
 motion/Morph_Motion_Prescribed.f90
 motion/Morph_Motion_Translation.f90
 motion/Morph_Motion_Nodeshift.f90
+motion/Morph_Motion_Given.f90
 quality/Morph_Quality.f90
 core/Morph_Block_m.f90
 domain/Morph_Domain.f90
@@ -259,13 +261,14 @@ for guard in "${GUARDS[@]}"; do
     ;;
 
   # ---------------------------------------------------------------------------
-  # (e) Unit tests: the GCL identity, single cell and whole block, and the
-  #     nodeshift law; 1 and 8 threads must print the same.
+  # (e) Unit tests: the GCL identity, single cell and whole block, the
+  #     nodeshift law, the event list and the given law; 1 and 8 threads must
+  #     print the same.
   # ---------------------------------------------------------------------------
   units)
     covers "$LIB" "$LIB_SRC" units || continue
     mkdir -p "$WORK/units"
-    for prog in test_morph_gcl test_morph_block test_morph_nodeshift; do
+    for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_events test_morph_given; do
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
              $(printf "$LIB/%s " $LIB_SRC) "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
         for nt in 1 8; do

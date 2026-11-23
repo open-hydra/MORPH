@@ -1,7 +1,8 @@
 # MORPH's test suite:  ctest --test-dir <build> [-L unit|guard|driver] [-j 2]
 #
-#   unit    the three unit programs MORPH came with (test/unit), built on
-#           MORPHL, at 1 and 8 threads, and the two outputs compared
+#   unit    the unit programs (test/unit): the three MORPH came with, the
+#           event list and the given law; built on MORPHL, at 1 and 8
+#           threads, and the two outputs compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
 #           build-configuration check, and MORPHL embedded in another project
 #   driver  bin/MORPH on the three-block mesh of driver/multiblock: one run per
@@ -26,7 +27,7 @@ endif()
 # ---------------------------------------------------------------------------
 # unit
 # ---------------------------------------------------------------------------
-foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift)
+foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_events test_morph_given)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)

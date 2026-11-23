@@ -24,6 +24,8 @@ module Morph_API
   use Morph_Motion_Prescribed, only: morph_motion_prescribed_t
   use Morph_Motion_Translation,only: morph_motion_translation_t
   use Morph_Motion_Nodeshift,  only: morph_motion_nodeshift_t
+  use Morph_Motion_Given,      only: morph_motion_given_t            ! positions decided elsewhere
+  use Morph_Events                                                   ! event codes and lists
   use Morph_Block_m,           only: Morph_Init, Morph_Update        ! the block core
   use Morph_Domain_m,          only: morph_domain_t, morph_block_t   ! the multi-block domain
 
@@ -36,10 +38,16 @@ module Morph_API
   public :: morph_motion_t, morph_motion_static_t, morph_motion_prescribed_t
   public :: morph_motion_translation_t, morph_motion_nodeshift_t
   public :: morph_domain_t, morph_block_t
+  public :: morph_motion_given_t, morph_nodefield_t
+  public :: morph_event_t, morph_event_list_t, MORPH_EV_STOP_LIMIT
+  public :: MORPH_EV_FACE_INERT, MORPH_EV_SPAN_BLOCKEDGE, MORPH_EV_PATCH_CONSUMED, MORPH_EV_FRONTS_MERGE
+  public :: MORPH_EV_LINE_CONSUMED, MORPH_EV_BREAKTHROUGH, MORPH_EV_STEP_MIDWALL, MORPH_EV_QUALITY
+  public :: MORPH_EV_MATERIAL, MORPH_EV_THIN, MORPH_EV_ANCHOR_BORN
 
   ! Status codes
   public :: MORPH_OK, MORPH_ERR_SINGULAR, MORPH_ERR_NEGVOL, MORPH_ERR_JACOBIAN
   public :: MORPH_ERR_SHAPE, MORPH_ERR_GCL
+  public :: MORPH_ERR_INPUT, MORPH_ERR_STATE, MORPH_ERR_EXCHANGE
 
   ! Entry points
   public :: Morph_Init
