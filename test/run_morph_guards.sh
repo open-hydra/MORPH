@@ -84,8 +84,9 @@ motion/Morph_Motion_Prescribed.f90
 motion/Morph_Motion_Translation.f90
 motion/Morph_Motion_Nodeshift.f90
 quality/Morph_Quality.f90
-Morph_API.f90
+core/Morph_Block_m.f90
 domain/Morph_Domain.f90
+Morph_API.f90
 "
 APP_SRC="
 config/Morph_Config_Types.f90

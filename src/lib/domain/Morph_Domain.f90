@@ -20,7 +20,11 @@
 !> MORPH must never `use` a FUSS module -- see Morph_Types_m.
 module Morph_Domain_m
   use iso_fortran_env, only: I4 => int32, R8 => real64
-  use Morph_API
+  use Morph_Types_m
+  use Morph_Block_m,       only: Morph_Init, Morph_Update
+  use Morph_GCL,           only: Morph_GCL_Residual, Morph_Swept_Outflow_Ratio
+  use Morph_Motion_m,      only: morph_motion_t
+  use Morph_Motion_Static, only: morph_motion_static_t
 
   implicit none
   private
