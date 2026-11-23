@@ -58,9 +58,10 @@ contains
     !! ------------------------------------------------------
     section = codename//'-Motion'
 
-    ! The allowed list is load-bearing: the driver selects the law by name, and
-    ! Validate_Registry refuses a name not listed here. Keep it in sync with
-    ! Set_Laws in main.f90.
+    ! The allowed list is load-bearing: the driver passes the law by name to
+    ! Morph_Run, and Validate_Registry refuses a name not listed here. Keep it
+    ! in sync with the laws Morph_Run installs (install_laws in
+    ! src/lib/run/Morph_Run.f90).
     call reg%add( trim(section), 'law', obj_motion%law, 'static', &
                   'Mesh motion law', 'static ,  prescribed ,  translation ,  nodeshift', .false. )
 

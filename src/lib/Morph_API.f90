@@ -11,6 +11,12 @@
 !>   call Morph_Update ( node, node_old, dim, t, dt, law, geom, status )   ! each step
 !>   call Morph_GCL_Residual ( geom, dim, r_abs, r_rel )        ! assert r_rel ~ 1e-15
 !>
+!> Or, to let MORPH hold the mesh (morph_domain_t) and run it, one call: the
+!> law installed, every step taken and checked, each one shown to the caller's
+!> observer (src/lib/run/Morph_Run.f90):
+!>
+!>   call Morph_Run ( domain, run, report, status, observer )
+!>
 !> MORPH must never `use` a FUSS module -- see Morph_Types_m.
 module Morph_API
   use iso_fortran_env, only: I4 => int32, R8 => real64
@@ -28,6 +34,8 @@ module Morph_API
   use Morph_Events                                                   ! event codes and lists
   use Morph_Block_m,           only: Morph_Init, Morph_Update        ! the block core
   use Morph_Domain_m,          only: morph_domain_t, morph_block_t   ! the multi-block domain
+  use Morph_Run_m,             only: morph_run_t, morph_run_step_t, morph_run_report_t, &
+                                     morph_run_observer_t, Morph_Run   ! the whole run in one call
 
   implicit none
   private
@@ -38,6 +46,7 @@ module Morph_API
   public :: morph_motion_t, morph_motion_static_t, morph_motion_prescribed_t
   public :: morph_motion_translation_t, morph_motion_nodeshift_t
   public :: morph_domain_t, morph_block_t
+  public :: morph_run_t, morph_run_step_t, morph_run_report_t, morph_run_observer_t
   public :: morph_motion_given_t, morph_nodefield_t
   public :: morph_event_t, morph_event_list_t, MORPH_EV_STOP_LIMIT
   public :: MORPH_EV_FACE_INERT, MORPH_EV_SPAN_BLOCKEDGE, MORPH_EV_PATCH_CONSUMED, MORPH_EV_FRONTS_MERGE
@@ -58,6 +67,7 @@ module Morph_API
   public :: Morph_Swept_Outflow_Ratio
   public :: Morph_Quality_Check
   public :: Morph_Geom_Allocate
+  public :: Morph_Run
 
 
 end module Morph_API

@@ -1,5 +1,6 @@
-# The MORPH driver: main.f90 with its input (config/) and mesh I/O (io/). These
-# are compiled into the executable only, so ORION and FiNeR never reach MORPHL.
+# The MORPH driver: main.f90 with its input (config/), its mesh I/O and its
+# observer of the run (io/). These are compiled into the executable only, so
+# ORION and FiNeR never reach MORPHL.
 file(GLOB MORPH_APP_SRC CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/config/*.f90
     ${CMAKE_CURRENT_SOURCE_DIR}/io/*.f90

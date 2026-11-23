@@ -14,8 +14,8 @@ It has two parts:
 
 | target | what | depends on |
 |---|---|---|
-| `MORPHL` (`libMORPHL.a`) | the library, `src/lib`: the kernels of FUSS's `src/lib/morph`, unchanged, plus `morph_domain_t` | `iso_fortran_env` (and `omp_lib`) only |
-| `MORPH` (`bin/MORPH`) | the driver, `src/app`: reads a mesh, moves it for a number of steps, writes it | MORPHL, ORION (mesh I/O), FiNeR (`input.ini`) |
+| `MORPHL` (`libMORPHL.a`) | the library, `src/lib`: the kernels of FUSS's `src/lib/morph`, plus `morph_domain_t`, `Morph_Run` (the whole run in one call), the `given` law and the event list | `iso_fortran_env` (and `omp_lib`) only |
+| `MORPH` (`bin/MORPH`) | the driver, `src/app`: reads a mesh, moves it for a number of steps with one call to `Morph_Run`, writes it | MORPHL, ORION (mesh I/O), FiNeR (`input.ini`) |
 
 The library never stops and does no I/O. Every entry point returns a `morph_status_t` and leaves the
 decision to its caller. It uses no FUSS module. The guards check all three rules (see Test).
@@ -38,15 +38,18 @@ install.sh              build / compile / update (FiNeR's dependencies)
 cmake/                  FUSS's flag files, verbatim
 src/lib/                the library (MORPHL)
   Morph_API.f90           the facade: the only module a solver needs to use
-  base/ metrics/ motion/ quality/   FUSS's kernels, verbatim
+  base/ metrics/ motion/ quality/   FUSS's kernels; new: base/Morph_Events.f90, motion/Morph_Motion_Given.f90
+  core/Morph_Block_m.f90  Morph_Init and Morph_Update, moved out of the facade unchanged
   domain/Morph_Domain.f90 morph_domain_t: the multi-block mesh state (new)
+  run/Morph_Run.f90       Morph_Run: the law installed, every step taken, checked and shown to an observer (new)
 src/app/                the driver (MORPH)
-  main.f90                read, move, write
+  main.f90                read, call Morph_Run, write
   config/                 input.ini: the registry (FUSS's pattern) and Register_Morph
   io/Morph_IO.f90         the mesh through ORION: PLOT3D or Tecplot ASCII
+  io/Morph_Output.f90     the driver's observer: the GCL log, the step lines, the snapshots
 test/
   CMakeLists.txt          the ctest suite
-  unit/                   FUSS's three unit programs, verbatim, and their runner
+  unit/                   FUSS's three unit programs, verbatim, the new ones and their runner
   driver/                 run_case.sh and the multiblock case: generate.py, verify.py, input-*.ini
   run_morph_guards.sh     the architecture guards
   check_build_config.sh   the build tree against CMakePresets.json
@@ -80,8 +83,9 @@ are gfortran's and are not registered). The three reasons were found on 2026-10-
 - ORION writes PLOT3D values with list-directed output. gfortran writes 17 significant digits, which
   read back to the same bits; ifx writes 15 or 16. Every check of `verify.py` that compares the output
   bit for bit with the input or with the law then fails.
-- `nodeshift` stops at its first step with `allocatable array is already allocated` (`Set_Shift` in
-  `main.f90`). This is an ifx bug: an `allocate( law, source = <structure constructor> )` that omits
+- `nodeshift` stopped at its first step with `allocatable array is already allocated` (`Set_Shift` in
+  `main.f90` then; the allocation is now in `Morph_Run`'s law setup, `src/lib/run/Morph_Run.f90`, not
+  tried again with ifx). This is an ifx bug: an `allocate( law, source = <structure constructor> )` that omits
   an allocatable component can leave that component with a non-null address, so `allocated()` says
   no and the next `allocate` says yes.
 - `prescribed` ends in a segmentation fault inside ifx's runtime, in the deallocation of the blocks
@@ -117,7 +121,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 33 tests in an OpenMP build
+ctest --test-dir build -j 2              # 43 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -126,9 +130,9 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 9 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
+| `unit` | 18 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_events`, `test_morph_given` and `test_morph_run` at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
-| `driver` | 16 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, then the two outputs compared, plus four runs that must be refused |
+| `driver` | 17 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, then the two outputs compared, plus five runs that must be refused |
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
 or below 1e-14 relative. FUSS's moving cases give ~1e-15; the measured maximum on this mesh is 4.1e-16
@@ -155,7 +159,7 @@ The refused runs cover each exit status of the driver:
 
 | exit status | refused run |
 |---|---|
-| 1 | an unknown key; a three-component key given two values |
+| 1 | an unknown key; a three-component key given two values; a `nodeshift-block` that names no block (refused by `Morph_Run`) |
 | 2 | a nodeshift that consumes a whole grid line (a MORPH status) |
 | 3 | a `gcl-tolerance` below round-off |
 
@@ -167,7 +171,10 @@ reproducer of 19 lines in two files, without FiNeR, shows it too. A Fortran name
 
 ## The driver
 
-From a case directory holding `input.ini`, run `<MORPH>/bin/MORPH`. Each run writes:
+From a case directory holding `input.ini`, run `<MORPH>/bin/MORPH`. The computation is one library
+call, `Morph_Run` (`src/lib/run/Morph_Run.f90`): the driver reads `input.ini` and the mesh, makes the
+call, and writes what its observer is shown after each step and the mesh at the end. A solver that
+holds a `morph_domain_t` can make the same call. Each run writes:
 
 - `mesh-out`, the mesh at the end;
 - every `out-diter` steps, `mesh-out` with `_<step>` before the extension;
