@@ -138,6 +138,12 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
 | `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
+**On GitHub.** `.github/workflows/ctest.yml` runs the same build (`install.sh build --compilers=gnu
+--use-openmp`, against ORION `5c32b73` and FiNeR `09adb98` cloned from GitHub) and all the tests above
+on Ubuntu 24.04: for every pull request to `main`, every push to `main`, the merge queue, and by hand.
+It fails when fewer than 57 tests are registered: without python3 >= 3.6, CMake drops the driver tests
+with only a warning. Raise that floor when tests are added.
+
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
 or below 1e-14 relative. FUSS's moving cases give ~1e-15; the measured maximum on this mesh is 4.1e-16
 (gfortran 12.2.1, `-O3 -march=native -flto`, 1 and 8 threads), and up to 2.4e-15 with ifx 2023.1. A
