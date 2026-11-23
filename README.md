@@ -16,7 +16,7 @@ It has two parts:
 
 | target | what | depends on |
 |---|---|---|
-| `MORPHL` (`libMORPHL.a`) | the library, `src/lib`: the kernels of FUSS's `src/lib/morph`, plus `morph_domain_t`, `Morph_Run` (the whole run in one call), the `given` law and the event list | `iso_fortran_env` (and `omp_lib`) only |
+| `MORPHL` (`libMORPHL.a`) | the library, `src/lib`: the kernels of FUSS's `src/lib/morph`, plus `morph_domain_t`, `Morph_Run` (the whole run in one call), the `given` law, the event list, and the wall as one surface across the blocks with its planes and fixed nodes | `iso_fortran_env` (and `omp_lib`) only |
 | `MORPH` (`bin/MORPH`) | the driver, `src/app`: reads a mesh, moves it for a number of steps with one call to `Morph_Run`, writes it | MORPHL, ORION (mesh I/O), FiNeR (`input.ini`) |
 
 The library never stops and does no I/O. Every entry point returns a `morph_status_t` and leaves the
@@ -43,12 +43,14 @@ src/lib/                the library (MORPHL)
   base/ metrics/ motion/ quality/   FUSS's kernels; new: base/Morph_Events.f90, motion/Morph_Motion_Given.f90
   motion/Morph_Smooth.f90 the smoothed interior of the nodeshift law (new)
   core/Morph_Block_m.f90  Morph_Init and Morph_Update, moved out of the facade unchanged
-  domain/Morph_Domain.f90 morph_domain_t: the multi-block mesh state (new)
+  domain/Morph_Domain.f90 morph_domain_t: the multi-block mesh state, its boundaries and its wall (new)
+  surface/                the wall as one surface across the blocks, its planes, the fixed-node masks (new)
   run/Morph_Run.f90       Morph_Run: the law installed, every step taken, checked and shown to an observer (new)
 src/app/                the driver (MORPH)
   main.f90                read, call Morph_Run, write
   config/                 input.ini: the registry (FUSS's pattern) and Register_Morph
   io/Morph_IO.f90         the mesh through ORION: PLOT3D or Tecplot ASCII
+  io/Morph_BC_IO.f90      the reader of the MORPH boundary-condition file, library MORPHBC (not read by the driver yet)
   io/Morph_Output.f90     the driver's observer: the GCL log, the step lines, the snapshots
 test/
   CMakeLists.txt          the ctest suite
@@ -125,7 +127,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 57 tests in an OpenMP build
+ctest --test-dir build -j 2              # 63 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -134,14 +136,14 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 21 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given` and `test_morph_run` at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte |
+| `unit` | 27 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface` and `test_morph_bc` at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. The last two write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
 | `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
 **On GitHub.** `.github/workflows/ctest.yml` runs the same build (`install.sh build --compilers=gnu
 --use-openmp`, against ORION `5c32b73` and FiNeR `09adb98` cloned from GitHub) and all the tests above
 on Ubuntu 24.04: for every pull request to `main`, every push to `main`, the merge queue, and by hand.
-It fails when fewer than 57 tests are registered: without python3 >= 3.6, CMake drops the driver tests
+It fails when fewer than 63 tests are registered: without python3 >= 3.6, CMake drops the driver tests
 with only a warning. Raise that floor when tests are added.
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at

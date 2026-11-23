@@ -36,6 +36,11 @@ module Morph_API
   use Morph_Events                                                   ! event codes and lists
   use Morph_Block_m,           only: Morph_Init, Morph_Update        ! the block core
   use Morph_Domain_m,          only: morph_domain_t, morph_block_t   ! the multi-block domain
+  use Morph_Surface_Types,     only: morph_conn_t, morph_bface_t, morph_plane_t, morph_mask_t, morph_surface_t, &
+                                     MORPH_BND_OTHER, MORPH_BND_RECEDE, MORPH_BND_IMPOSED, MORPH_BND_FIXEDSURF, &
+                                     MORPH_BND_PLANE, MORPH_BND_CONN, MORPH_BND_PERIODIC, MORPH_BND_CHIMERA
+  use Morph_Surface,           only: morph_surface_stats_t, Morph_Surface_Build, Morph_Surface_Scatter
+  use Morph_Fixed,             only: Morph_Fixed_Masks                ! the wall and the fixed nodes
   use Morph_Run_m,             only: morph_run_t, morph_run_step_t, morph_run_report_t, &
                                      morph_run_observer_t, Morph_Run   ! the whole run in one call
 
@@ -51,6 +56,9 @@ module Morph_API
   public :: MORPH_INTERIOR_LINE, MORPH_INTERIOR_SMOOTH
   public :: morph_domain_t, morph_block_t
   public :: morph_run_t, morph_run_step_t, morph_run_report_t, morph_run_observer_t
+  public :: morph_conn_t, morph_bface_t, morph_plane_t, morph_mask_t, morph_surface_t, morph_surface_stats_t
+  public :: MORPH_BND_OTHER, MORPH_BND_RECEDE, MORPH_BND_IMPOSED, MORPH_BND_FIXEDSURF
+  public :: MORPH_BND_PLANE, MORPH_BND_CONN, MORPH_BND_PERIODIC, MORPH_BND_CHIMERA
   public :: morph_motion_given_t, morph_nodefield_t
   public :: morph_event_t, morph_event_list_t, MORPH_EV_STOP_LIMIT
   public :: MORPH_EV_FACE_INERT, MORPH_EV_SPAN_BLOCKEDGE, MORPH_EV_PATCH_CONSUMED, MORPH_EV_FRONTS_MERGE
@@ -72,6 +80,7 @@ module Morph_API
   public :: Morph_Quality_Check
   public :: Morph_Geom_Allocate
   public :: Morph_Run
+  public :: Morph_Surface_Build, Morph_Surface_Scatter, Morph_Fixed_Masks
 
 
 end module Morph_API

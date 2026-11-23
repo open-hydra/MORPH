@@ -25,6 +25,7 @@ module Morph_Domain_m
   use Morph_GCL,           only: Morph_GCL_Residual, Morph_Swept_Outflow_Ratio
   use Morph_Motion_m,      only: morph_motion_t
   use Morph_Motion_Static, only: morph_motion_static_t
+  use Morph_Surface_Types, only: morph_conn_t, morph_bface_t, morph_plane_t, morph_mask_t, morph_surface_t
 
   implicit none
   private
@@ -47,6 +48,16 @@ module Morph_Domain_m
     type(morph_block_t), allocatable :: blk(:)
     real(R8)                         :: t    = 0.0_R8     !> time of the current node positions
     integer(I4)                      :: step = 0          !> steps taken since init
+    !> Boundaries and wall: conns and bfaces filled by the caller (the driver
+    !> from the MORPH boundary file, a coupler from its own data); surf and
+    !> planes by Morph_Surface_Build; fixed by Morph_Fixed_Masks. Empty for the
+    !> laws of today, which do not need them.
+    type(morph_conn_t),  allocatable :: conns(:)
+    type(morph_bface_t), allocatable :: bfaces(:,:)       !> (nblocks, 6)
+    type(morph_plane_t), allocatable :: planes(:)
+    type(morph_mask_t),  allocatable :: fixed(:)          !> (nblocks)
+    logical,             allocatable :: frozen(:)         !> (nblocks)
+    type(morph_surface_t)            :: surf
   contains
     procedure :: allocate_blocks => domain_allocate_blocks
     procedure :: init            => domain_init
@@ -208,8 +219,58 @@ contains
   !> Release every block (nodes, geometry and law with it).
   subroutine domain_free ( self )
     class(morph_domain_t), intent(inout) :: self
+    ! Local
+    integer(I4) :: b, d
 
-    if ( allocated(self%blk) ) deallocate( self%blk )
+    ! ifx 2023.1 with -fiopenmp segfaults deallocating blk whole (README,
+    ! Compilers): free the allocatable components of every block first.
+    if ( allocated(self%blk) ) then
+      do b = 1, size(self%blk)
+        if ( allocated(self%blk(b)%node) )          deallocate( self%blk(b)%node )
+        if ( allocated(self%blk(b)%node_old) )      deallocate( self%blk(b)%node_old )
+        if ( allocated(self%blk(b)%geom%vol) )      deallocate( self%blk(b)%geom%vol )
+        if ( allocated(self%blk(b)%geom%vol_old) )  deallocate( self%blk(b)%geom%vol_old )
+        if ( allocated(self%blk(b)%geom%dV_swept) ) deallocate( self%blk(b)%geom%dV_swept )
+        if ( allocated(self%blk(b)%geom%M) )        deallocate( self%blk(b)%geom%M )
+        if ( allocated(self%blk(b)%geom%dl) )       deallocate( self%blk(b)%geom%dl )
+        do d = 1, 3
+          if ( allocated(self%blk(b)%geom%dir(d)%f) ) deallocate( self%blk(b)%geom%dir(d)%f )
+        enddo
+        if ( allocated(self%blk(b)%law) )           deallocate( self%blk(b)%law )
+      enddo
+      deallocate( self%blk )
+    endif
+    if ( allocated(self%bfaces) ) then
+      do d = 1, size(self%bfaces,2)
+        do b = 1, size(self%bfaces,1)
+          if ( allocated(self%bfaces(b,d)%kind) ) deallocate( self%bfaces(b,d)%kind )
+          if ( allocated(self%bfaces(b,d)%mat) )  deallocate( self%bfaces(b,d)%mat )
+          if ( allocated(self%bfaces(b,d)%rate) ) deallocate( self%bfaces(b,d)%rate )
+        enddo
+      enddo
+      deallocate( self%bfaces )
+    endif
+    if ( allocated(self%fixed) ) then
+      do b = 1, size(self%fixed)
+        if ( allocated(self%fixed(b)%m) ) deallocate( self%fixed(b)%m )
+      enddo
+      deallocate( self%fixed )
+    endif
+    if ( allocated(self%conns) )  deallocate( self%conns )
+    if ( allocated(self%planes) ) deallocate( self%planes )
+    if ( allocated(self%frozen) ) deallocate( self%frozen )
+    if ( allocated(self%surf%first) )     deallocate( self%surf%first )
+    if ( allocated(self%surf%copy_b) )    deallocate( self%surf%copy_b )
+    if ( allocated(self%surf%copy_ijk) )  deallocate( self%surf%copy_ijk )
+    if ( allocated(self%surf%owner) )     deallocate( self%surf%owner )
+    if ( allocated(self%surf%face_node) ) deallocate( self%surf%face_node )
+    if ( allocated(self%surf%face_cell) ) deallocate( self%surf%face_cell )
+    if ( allocated(self%surf%face_kind) ) deallocate( self%surf%face_kind )
+    if ( allocated(self%surf%face_mat) )  deallocate( self%surf%face_mat )
+    if ( allocated(self%surf%edge_node) ) deallocate( self%surf%edge_node )
+    if ( allocated(self%surf%edge_kind) ) deallocate( self%surf%edge_kind )
+    if ( allocated(self%surf%edge_ref) )  deallocate( self%surf%edge_ref )
+    self%surf%nnode = 0; self%surf%nface = 0; self%surf%nedge = 0
     self%nblocks = 0
     self%t       = 0.0_R8
     self%step    = 0
