@@ -2,9 +2,10 @@
 #
 #   unit    the unit programs (test/unit): the three MORPH came with, the
 #           smoothed interior, the event list, the given law, the one-call run,
-#           the surface and the reader of the MORPH boundary file; built on
-#           MORPHL (the last two also on the driver's reader, MORPHBC), at 1
-#           and 8 threads, and the two outputs compared
+#           the surface, the reader of the MORPH boundary file and the
+#           level-set kernels; built on MORPHL (the surface and the reader
+#           tests also on the driver's reader, MORPHBC), at 1 and 8 threads,
+#           and the two outputs compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
 #           build-configuration check, and MORPHL embedded in another project
 #   driver  bin/MORPH on the three-block mesh of driver/multiblock: one run per
@@ -32,7 +33,7 @@ endif()
 # unit
 # ---------------------------------------------------------------------------
 foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth test_morph_events
-             test_morph_given test_morph_run test_morph_surface test_morph_bc)
+             test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
