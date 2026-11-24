@@ -89,7 +89,10 @@ motion/Morph_Motion_Nodeshift.f90
 motion/Morph_Motion_Given.f90
 quality/Morph_Quality.f90
 core/Morph_Block_m.f90
+surface/Morph_Surface_Types.f90
 domain/Morph_Domain.f90
+surface/Morph_Surface.f90
+surface/Morph_Fixed.f90
 run/Morph_Run.f90
 Morph_API.f90
 "
@@ -99,6 +102,7 @@ config/Morph_Registry.f90
 config/Register_Morph.f90
 config/Morph_Backend_INI.f90
 config/Morph_Read_Ini.f90
+io/Morph_BC_IO.f90
 io/Morph_IO.f90
 io/Morph_Output.f90
 main.f90
@@ -267,15 +271,20 @@ for guard in "${GUARDS[@]}"; do
   # ---------------------------------------------------------------------------
   # (e) Unit tests: the GCL identity, single cell and whole block, the
   #     nodeshift law and its smoothed interior, the event list, the given
-  #     law and the one-call run; 1 and 8 threads must print the same.
+  #     law, the one-call run, the surface and the reader of the MORPH
+  #     boundary file; 1 and 8 threads must print the same. The last two read
+  #     files with the driver's reader, which uses nothing but the library, so
+  #     it is compiled with them.
   # ---------------------------------------------------------------------------
   units)
     covers "$LIB" "$LIB_SRC" units || continue
     mkdir -p "$WORK/units"
     for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
-                test_morph_given test_morph_run; do
+                test_morph_given test_morph_run test_morph_surface test_morph_bc; do
+      extra=""
+      case $prog in test_morph_surface|test_morph_bc) extra="$APP/io/Morph_BC_IO.f90" ;; esac
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
-             $(printf "$LIB/%s " $LIB_SRC) "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
+             $(printf "$LIB/%s " $LIB_SRC) $extra "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
         for nt in 1 8; do
           if ( cd "$WORK/units" && OMP_NUM_THREADS=$nt "./$prog" ) > "$WORK/units/$prog.$nt.out" 2>&1; then
             pass "$prog (OMP_NUM_THREADS=$nt)"

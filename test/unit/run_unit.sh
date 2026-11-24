@@ -9,9 +9,14 @@
 #               end with `error stop 1` on any failed check.
 #===============================================================================
 set -u
-[ $# -eq 3 ] || { sed -n '3,3p' "$0" >&2; exit 2; }
+[ $# -eq 3 ] && [ -n "$3" ] || { sed -n '3,3p' "$0" >&2; exit 2; }
 mkdir -p "$(dirname "$3")" || exit 2
-OMP_NUM_THREADS=$2 "$1" > "$3" 2>&1
+# Each run in a directory of its own, <out>.work: some programs write files
+# where they run, and ctest may run the 1- and 8-thread runs of one program at
+# the same time. <program> and <out> are absolute paths (test/CMakeLists.txt).
+work="$3.work"
+rm -rf "$work" && mkdir -p "$work" || exit 2
+( cd "$work" && OMP_NUM_THREADS=$2 "$1" ) > "$3" 2>&1
 rc=$?
 cat "$3"
 exit $rc
