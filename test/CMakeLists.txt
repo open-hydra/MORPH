@@ -2,8 +2,11 @@
 #
 #   unit    the unit programs (test/unit): the three MORPH came with, the
 #           smoothed interior, the event list, the given law, the one-call run,
-#           the surface, the reader of the MORPH boundary file and the
-#           level-set kernels; built on MORPHL (the surface and the reader
+#           the surface, the reader of the MORPH boundary file, the
+#           level-set kernels and the level-set grid of blocks with its
+#           exchanges (its simulated ranks are threads, so it asks for 4
+#           processors and is stopped after 300 s if a rank is left
+#           waiting); built on MORPHL (the surface and the reader
 #           tests also on the driver's reader, MORPHBC), at 1 and 8 threads,
 #           and the two outputs compared
 #   guard   the architecture guards of run_morph_guards.sh, one test each, the
@@ -33,7 +36,8 @@ endif()
 # unit
 # ---------------------------------------------------------------------------
 foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth test_morph_events
-             test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls)
+             test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls
+             test_morph_ls_blocks)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
@@ -54,6 +58,12 @@ foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smo
                           ${MORPH_RUN_DIR}/unit/${prog}.omp${nt}.out)
     set_tests_properties(${t} PROPERTIES LABELS unit PROCESSORS ${nt} FIXTURES_SETUP ${t}
                          FAIL_REGULAR_EXPRESSION "FAIL")
+    if(prog STREQUAL "test_morph_ls_blocks")
+      if(nt LESS 4)
+        set_tests_properties(${t} PROPERTIES PROCESSORS 4)
+      endif()
+      set_tests_properties(${t} PROPERTIES TIMEOUT 300)
+    endif()
   endforeach()
 
   if(USE_OPENMP)
