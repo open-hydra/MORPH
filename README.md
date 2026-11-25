@@ -133,7 +133,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 69 tests in an OpenMP build
+ctest --test-dir build -j 2              # 72 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -142,14 +142,14 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 33 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface`, `test_morph_bc`, `test_morph_ls` (the level-set kernels, below) and `test_morph_ls_blocks` (the level-set grid of blocks and its exchanges, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. `test_morph_surface` and `test_morph_bc` write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
+| `unit` | 36 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface`, `test_morph_bc`, `test_morph_ls` (the level-set kernels, below), `test_morph_ls_blocks` (the level-set grid of blocks and its exchanges, below) and `test_morph_ls_band` (its narrow band, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. `test_morph_surface` and `test_morph_bc` write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
 | `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
 **On GitHub.** `.github/workflows/ctest.yml` runs the same build (`install.sh build --compilers=gnu
 --use-openmp`, against ORION `5c32b73` and FiNeR `09adb98` cloned from GitHub) and all the tests above
 on Ubuntu 24.04: for every pull request to `main`, every push to `main`, the merge queue, and by hand.
-It fails when fewer than 69 tests are registered: without python3 >= 3.6, CMake drops the driver tests
+It fails when fewer than 72 tests are registered: without python3 >= 3.6, CMake drops the driver tests
 with only a warning. Raise that floor when tests are added.
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
@@ -266,6 +266,32 @@ is left waiting. Each of the test's 50 checks fails under at least one of 120 de
 the three new files, and 119 of the 120 fail the test (the 6 that remove a barrier of the simulated
 exchange, in 20 runs out of 20). The other one cannot change any result: the zeroing of the step's
 work array, whose corners no stencil reads.
+
+**The narrow band** (`levelset/Morph_LS_Grid.f90`, `test_morph_ls_band`) keeps only some blocks active: they
+hold phi and move, the others hold nothing. The active set is the same on every rank: all the blocks,
+or the set given to `Morph_LS_Grid_Init`, then the set of each `Morph_LS_Grid_Update`, a collective in
+which a block is active when at least one rank asks for it (the rank whose block the front approaches
+asks for the blocks beyond it, whoever owns them). An inactive neighbour is the edge of the grid: the
+ghosts toward it are extrapolated from the block's own nodes and no message carries them. The update
+returns, for each new slot, the slot its block had before (0 for a block just activated), and
+`Morph_LS_Grid_Remap` moves any field of slots with it, leaving a NaN in the new slots for the caller to
+fill. Every active node moves at its full speed. There is no window that slows the nodes far from the
+front: a node whose speed is zero never changes, so it never comes back into the window, and the
+levels ahead of a moving front pile up against it. The band then differs from the whole grid only by
+the extrapolated ghosts at its edge and the values a block starts from; the caller chooses how far
+from the front the inactive blocks stay, asks for the blocks and fills the new ones.
+
+The test checks the band against an oracle written in the test on the whole grid (the ghosts of a
+side from the whole grid when the block beyond is active, else extrapolated; then the kernels'
+rate and stage), itself the step on the whole grid when every block is active.
+
+Measured with gfortran 13.3 on aarch64, with the release flags (fused multiply-adds allowed) and with
+`-ffp-contract=off`: in every case of the test the band gives the oracle's bits, at 1 and 8 threads, and
+the oracle with every block active gives the bits of the step on the whole grid. Each of the test's 55
+checks fails under at least one of 38 deliberate changes of the band's code (one of them in the ghost fill
+it shares with the grid of blocks), and all 38 fail the test: 35 with a failed check, 2 by a crash (an
+allocation not released before the next, a field read before it is allocated) and 1 by the time limit (a
+rank that does not take another rank's refusal leaves the others waiting).
 
 ## The driver
 

@@ -292,7 +292,7 @@ for guard in "${GUARDS[@]}"; do
     command -v timeout >/dev/null 2>&1 && TMO="timeout $UNIT_TIMEOUT"
     for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
                 test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls \
-                test_morph_ls_blocks; do
+                test_morph_ls_blocks test_morph_ls_band; do
       extra=""
       case $prog in test_morph_surface|test_morph_bc) extra="$APP/io/Morph_BC_IO.f90" ;; esac
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \

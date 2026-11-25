@@ -62,13 +62,13 @@ jobs:
             --include-orion="$RUNNER_TEMP/ORION" --include-finer="$RUNNER_TEMP/FiNeR"
 
       - name: Check the tests registered
-        # 69 in an OpenMP build (README, Test). Without python3 >= 3.6 CMake
+        # 72 in an OpenMP build (README, Test). Without python3 >= 3.6 CMake
         # drops the 28 driver tests with only a warning; this step fails then.
         # Raise the floor when tests are added.
         run: |
           n=$(ctest --test-dir build -N | sed -n 's/^Total Tests: //p')
           echo "tests registered: $n"
-          test "$n" -ge 69
+          test "$n" -ge 72
 
       - name: Run tests
         # Every test the build registers: unit, guard and driver
