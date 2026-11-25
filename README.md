@@ -45,6 +45,12 @@ src/lib/                the library (MORPHL)
   core/Morph_Block_m.f90  Morph_Init and Morph_Update, moved out of the facade unchanged
   domain/Morph_Domain.f90 morph_domain_t: the multi-block mesh state, its boundaries and its wall (new)
   surface/                the wall as one surface across the blocks, its planes, the fixed-node masks (new)
+  levelset/               the level-set kernels on a 2-D grid: the WENO-Z / Godunov / RK3 step and the
+                          reinitialisation; the grid of blocks split among ranks, its ghosts and the
+                          step on blocks (new; the regression that uses them comes later)
+  parallel/               the exchange between ranks: the interface the library calls and its caller
+                          implements (no MPI in the library), one rank's, and simulated ranks for the
+                          tests (new)
   run/Morph_Run.f90       Morph_Run: the law installed, every step taken, checked and shown to an observer (new)
 src/app/                the driver (MORPH)
   main.f90                read, call Morph_Run, write
@@ -127,7 +133,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 63 tests in an OpenMP build
+ctest --test-dir build -j 2              # 69 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -136,14 +142,14 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 27 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface` and `test_morph_bc` at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. The last two write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
+| `unit` | 33 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface`, `test_morph_bc`, `test_morph_ls` (the level-set kernels, below) and `test_morph_ls_blocks` (the level-set grid of blocks and its exchanges, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. `test_morph_surface` and `test_morph_bc` write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
 | `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
 **On GitHub.** `.github/workflows/ctest.yml` runs the same build (`install.sh build --compilers=gnu
 --use-openmp`, against ORION `5c32b73` and FiNeR `09adb98` cloned from GitHub) and all the tests above
 on Ubuntu 24.04: for every pull request to `main`, every push to `main`, the merge queue, and by hand.
-It fails when fewer than 63 tests are registered: without python3 >= 3.6, CMake drops the driver tests
+It fails when fewer than 69 tests are registered: without python3 >= 3.6, CMake drops the driver tests
 with only a warning. Raise that floor when tests are added.
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
@@ -194,6 +200,72 @@ gfortran 12 warning, `'.<name>' is used uninitialized`. It is a compiler false p
 length of any deferred-length character array passed to an `intent(out)` dummy, as FiNeR's are. A
 reproducer of 19 lines in two files, without FiNeR, shows it too. A Fortran name cannot start with
 `.`, so no warning about the code itself can be dropped this way.
+
+**The level-set kernels** (`src/lib/levelset`, `test_morph_ls`) are the first pieces of the surface
+regression: one step of the level-set equation over a whole 2-D grid (fifth-order WENO-Z derivatives,
+Godunov's upwind Hamiltonian, the three-stage strong-stability-preserving Runge-Kutta step), and the
+safety reinitialisation with its trigger, the mean eikonal error near the front. Their order of
+operations is fixed: built without fused multiply-adds (`-ffp-contract=off`), they give the same bits
+as any implementation of the same formulas in the same order. The test uses grids of spacing
+h = 1/32 with power-of-two origins and slopes, so that its exact checks are exact by construction.
+Measured with gfortran 13.3 on aarch64, release flags:
+
+- WENO-Z: on cubic data, the exact derivative within 0.58 eps of the largest one (bound 8 eps); next
+  to a jump, the closed form of its weights within 1 eps (bound 32 eps); on flat data, 0; on data
+  scaled by 2^20 or 2^-20, the value scaled, bit for bit (the epsilon scales with the data);
+- Godunov's |grad phi|: on a linear field, exact at every node in both branches; at the bottom of a
+  valley, 0 exactly for a front moving along +n and 1 - 2.08e-13 for one moving along -n (bound
+  1e-12);
+- one step: on a plane front, phi + dt; on a cubic profile, p(x + dt), which only a third-order step
+  gives (a second-order one misses 5.96e-8); both exact in this build (bounds 4 and 8 eps of
+  max |phi|). A zero velocity, +0 or -0, leaves phi untouched, bit for bit;
+- a circle of radius 32 h, solid inside and fluid inside, over a stroke of h: the error at the nodes
+  within 2h of the front is 1.50e-8 h and 1.75e-8 h, the same within 5.5e-6 (relative) for sub-steps
+  of h/4, h/10 and h/100 (bounds 1e-6 h and 1e-3);
+- the eikonal error: 0 on a linear field of unit slope, 1/32 on (x^2 - 1)/2, both exactly; the
+  reinitialisation runs only when it is strictly above the threshold;
+- the reinitialisation: the signed distance of a plane is a fixed point, bit for bit, and the -0 of
+  an edge node keeps its sign; not run on the circle's distance (eikonal error 1.22e-4, threshold 0.03); on the circle's zero level with a
+  gradient between 0.78 and 1.23, four iterations take the eikonal error from 0.0799 to 0.0226, the
+  zero crossings along the grid edges move by 1.074e-3 h at most (bound 5e-3 h), and the eikonal
+  error and the sum of phi recorded when the kernels were written come back within 1e-10 (relative;
+  five gfortran builds spread them by 3.1e-16, a sum in another order could move them by 2.1e-12).
+
+Each of the test's 40 checks fails under at least one of 67 deliberate changes of the kernels, and 66
+of the 67 fail the test. The other one cannot change any result: the Godunov branch at the nodes
+where V = 0, whose rate -V |grad phi| is a zero whose sign comes from V alone (|grad phi| >= 0).
+
+**The level-set grid of blocks** (`levelset/Morph_LS_Grid.f90`, `parallel/`, `test_morph_ls_blocks`)
+splits the same grid into blocks of nbn x nbn nodes (nbn >= 3), each block on the rank its caller
+chooses. Before each stage of the step, the three ghost layers along each side of a block are filled
+with the nodes of the block beyond it (copied when that block is on the same rank, swapped through
+the exchange when it is on another) and, at the edge of the grid, with the extrapolation of the whole
+grid; the corners are neither filled nor read. Every value a stencil reads is then the one it reads
+on the whole grid, so the step on blocks gives the bits of the step on the whole grid, for any
+blocks, any split among ranks and any number of threads. The library talks to the other ranks only
+through `morph_exchange_t`: a swap of packed buffers with the contract of `MPI_Alltoallv`, an
+allgather, and a sum of one partial per block taken in block order (the same bits for any number of
+ranks). The caller implements it with its own MPI; `morph_exchange_serial_t` is one rank's.
+
+The step is a collective: every rank checks its own arguments, then all share their verdicts and
+whether V moves anything, in one allgather, so that either every rank leaves early or none does (a
+rank that left alone would leave the others waiting in the next exchange). The test runs N ranks in
+one process with `morph_exchange_sim_t`: each rank is a thread of a parallel region of N threads, and
+a collective is: each rank writes its own mailbox, barrier, each reads all of them, barrier. Every
+refusal of the simulated exchange is taken by all the ranks together: a team without one thread per
+rank (`OMP_THREAD_LIMIT`, a call outside the region), a rank that is not its thread, counts or owners
+that two ranks do not agree on. The library's own OpenMP loops, inside a rank's thread, are nested
+regions, inactive by default. Built without OpenMP, the test skips the simulated ranks and says so.
+
+Measured with gfortran 13.3 on aarch64, with the release flags (fused multiply-adds allowed) and with
+`-ffp-contract=off`: in every case of the test the step on blocks gives the bits of the step on the
+whole grid, at 1 and 8 threads (blocks of 3, 5 and 8 nodes; 1 to 20 blocks; 1 to 4 ranks, split as a
+checkerboard, in halves, dealt in turn, with a rank that has no block, by rows, scattered). Under
+`OMP_THREAD_LIMIT=2` the 9 checks that need 3 or 4 ranks fail, refused by the team check, and no rank
+is left waiting. Each of the test's 50 checks fails under at least one of 120 deliberate changes of
+the three new files, and 119 of the 120 fail the test (the 6 that remove a barrier of the simulated
+exchange, in 20 runs out of 20). The other one cannot change any result: the zeroing of the step's
+work array, whose corners no stencil reads.
 
 ## The driver
 

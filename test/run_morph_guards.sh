@@ -78,6 +78,8 @@ ALL=0
 LIB_SRC="
 base/Morph_Types_m.f90
 base/Morph_Events.f90
+parallel/Morph_Exchange.f90
+parallel/Morph_Exchange_Sim.f90
 metrics/Morph_GCL.f90
 metrics/Morph_Metrics.f90
 motion/Morph_Motion_m.f90
@@ -93,6 +95,9 @@ surface/Morph_Surface_Types.f90
 domain/Morph_Domain.f90
 surface/Morph_Surface.f90
 surface/Morph_Fixed.f90
+levelset/Morph_LS_HJ.f90
+levelset/Morph_LS_Reinit.f90
+levelset/Morph_LS_Grid.f90
 run/Morph_Run.f90
 Morph_API.f90
 "
@@ -271,25 +276,33 @@ for guard in "${GUARDS[@]}"; do
   # ---------------------------------------------------------------------------
   # (e) Unit tests: the GCL identity, single cell and whole block, the
   #     nodeshift law and its smoothed interior, the event list, the given
-  #     law, the one-call run, the surface and the reader of the MORPH
-  #     boundary file; 1 and 8 threads must print the same. The last two read
-  #     files with the driver's reader, which uses nothing but the library, so
-  #     it is compiled with them.
+  #     law, the one-call run, the surface, the reader of the MORPH boundary
+  #     file, the level-set kernels and the level-set grid of blocks with its
+  #     exchanges; 1 and 8 threads must print the same. A program that
+  #     waits for ever (a simulated rank left at a barrier) is stopped after
+  #     UNIT_TIMEOUT seconds where coreutils' timeout exists.
+  #     The surface and the reader tests read files with the driver's reader,
+  #     which uses nothing but the library, so it is compiled with them.
   # ---------------------------------------------------------------------------
   units)
     covers "$LIB" "$LIB_SRC" units || continue
     mkdir -p "$WORK/units"
+    UNIT_TIMEOUT=600
+    TMO=""
+    command -v timeout >/dev/null 2>&1 && TMO="timeout $UNIT_TIMEOUT"
     for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
-                test_morph_given test_morph_run test_morph_surface test_morph_bc; do
+                test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls \
+                test_morph_ls_blocks; do
       extra=""
       case $prog in test_morph_surface|test_morph_bc) extra="$APP/io/Morph_BC_IO.f90" ;; esac
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
              $(printf "$LIB/%s " $LIB_SRC) $extra "$ROOT/test/unit/$prog.f90" ) >> "$WORK/units.log" 2>&1; then
         for nt in 1 8; do
-          if ( cd "$WORK/units" && OMP_NUM_THREADS=$nt "./$prog" ) > "$WORK/units/$prog.$nt.out" 2>&1; then
+          if ( cd "$WORK/units" && OMP_NUM_THREADS=$nt $TMO "./$prog" ) > "$WORK/units/$prog.$nt.out" 2>&1; then
             pass "$prog (OMP_NUM_THREADS=$nt)"
           else
-            bad "$prog failed with OMP_NUM_THREADS=$nt:"
+            rc=$?
+            bad "$prog failed with OMP_NUM_THREADS=$nt$( [ $rc -eq 124 ] && [ -n "$TMO" ] && echo " (stopped after $UNIT_TIMEOUT s)" ):"
             sed 's/^/          /' "$WORK/units/$prog.$nt.out" | grep -vE '^\s+#|Error termination' | head -15
           fi
         done
