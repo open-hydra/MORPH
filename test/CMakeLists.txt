@@ -37,7 +37,7 @@ endif()
 # ---------------------------------------------------------------------------
 foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smooth test_morph_events
              test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls
-             test_morph_ls_blocks)
+             test_morph_ls_blocks test_morph_ls_band)
   add_executable(${prog} unit/${prog}.f90)
   set_target_properties(${prog} PROPERTIES LINKER_LANGUAGE Fortran
                         RUNTIME_OUTPUT_DIRECTORY ${MORPH_RUN_DIR}/unit)
@@ -58,7 +58,7 @@ foreach(prog test_morph_block test_morph_gcl test_morph_nodeshift test_morph_smo
                           ${MORPH_RUN_DIR}/unit/${prog}.omp${nt}.out)
     set_tests_properties(${t} PROPERTIES LABELS unit PROCESSORS ${nt} FIXTURES_SETUP ${t}
                          FAIL_REGULAR_EXPRESSION "FAIL")
-    if(prog STREQUAL "test_morph_ls_blocks")
+    if(prog MATCHES "^test_morph_ls_(blocks|band)$")
       if(nt LESS 4)
         set_tests_properties(${t} PROPERTIES PROCESSORS 4)
       endif()
