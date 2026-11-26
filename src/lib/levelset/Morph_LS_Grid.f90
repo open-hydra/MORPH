@@ -10,9 +10,9 @@
 !> Morph_LS_Grid_Init, then the set of each Morph_LS_Grid_Update, where a
 !> block is active when at least one rank asks for it (the rank whose block
 !> the front approaches asks for the blocks beyond it, whoever owns them).
-!> An inactive neighbour is the edge of the grid: the ghosts toward it are
-!> the linear extrapolation of the block's own nodes, and no message carries
-!> them. Every active node moves at its full speed. There is no window that
+!> The ghosts toward an inactive neighbour come from the block's own nodes
+!> (THE GHOSTS), and no message carries them. Every active node moves at its
+!> full speed. There is no window that
 !> slows the nodes far from the front: a node whose speed is zero never
 !> changes, so it never comes back into the window, and the levels ahead of a
 !> moving front pile up against it. Without one, the field near the front is
@@ -27,13 +27,20 @@
 !> THE GHOSTS. A step works on w(1-NG:nbn+NG, 1-NG:nbn+NG, slot), the layout
 !> of the kernels of Morph_LS_HJ for each block. Morph_LS_Halo_Fill fills the
 !> NG layers along each side with the nodes of the active block beyond it (a
-!> block has at least NG nodes per side, so one neighbour has them all), and
-!> at the edge of the grid or of the band with the linear extrapolation of
-!> Morph_LS_Ghosts_Extrap, as on the whole grid. The corners are neither
-!> filled nor read. With every block active, every value a stencil reads is
-!> then the one it reads on the whole grid, so Morph_LS_HJ_Step gives the
-!> bits of Morph_LS_HJ_Step_Full for any blocks, any split among ranks and
-!> any number of threads.
+!> block has at least NG nodes per side, so one neighbour has them all). At
+!> the edge of the grid it extrapolates linearly (Morph_LS_Ghosts_Extrap), as
+!> on the whole grid. Toward an inactive block, given the speed V (the step
+!> gives it), Morph_LS_Ghosts_Upwind chooses line by line: linear where the
+!> characteristics enter the block, quadratic where they leave it; without V,
+!> linear. Where they leave, the quadratic follows the curvature of the level
+!> sets and brings the band's front closer to the whole grid's; where they
+!> enter, what the ghosts carry moves into the band, and with a quadratic
+!> there a band drifted away from the whole grid (the README's narrow band
+!> gives the numbers). The corners are neither filled nor read.
+!> With every block active, no side faces an inactive block and every value
+!> a stencil reads is the one it reads on the whole grid, so
+!> Morph_LS_HJ_Step gives the bits of Morph_LS_HJ_Step_Full for any blocks,
+!> any split among ranks and any number of threads.
 !>
 !> THE MESSAGES. A strip is the NG x nbn ghost values along one side of one
 !> block, in the order of that block's array (i fastest). Each rank lists the
@@ -57,7 +64,8 @@ module Morph_LS_Grid
   use iso_fortran_env, only: I4 => int32, I8 => int64, R8 => real64
   use Morph_Types_m
   use Morph_Exchange,  only: morph_exchange_t
-  use Morph_LS_HJ,     only: MORPH_LS_NG, Morph_LS_Ghosts_Extrap, Morph_LS_Rate, Morph_LS_RK3_Combine
+  use Morph_LS_HJ,     only: MORPH_LS_NG, Morph_LS_Ghosts_Extrap, Morph_LS_Ghosts_Upwind, Morph_LS_Rate, &
+                             Morph_LS_RK3_Combine
 
   implicit none
   private
@@ -489,16 +497,18 @@ contains
   !> The ghosts of this rank's blocks, w(1-NG:nbn+NG, 1-NG:nbn+NG, slot), from
   !> their interior nodes and those of the other ranks: the strips for the
   !> other ranks are packed, swapped and unpacked; those between two of my
-  !> blocks are copied; at the edge of the grid or of the band, extrapolated.
-  !> A collective (see the header); w of another shape is refused on this
-  !> rank only.
-  subroutine Morph_LS_Halo_Fill ( grid, exch, w, status )
+  !> blocks are copied; at the edge of the grid, extrapolated linearly; toward
+  !> an inactive block, by Morph_LS_Ghosts_Upwind from vls(nbn, nbn, slot),
+  !> the speed at the nodes, when it is given, else linearly. A collective
+  !> (see the header); w or vls of another shape is refused on this rank only.
+  subroutine Morph_LS_Halo_Fill ( grid, exch, w, status, vls )
     type(morph_ls_grid_t),   intent(in)    :: grid
     class(morph_exchange_t), intent(inout) :: exch
     real(R8),                intent(inout) :: w(1-NG:, 1-NG:, :)
     type(morph_status_t),    intent(out)   :: status
+    real(R8), optional,      intent(in)    :: vls(:,:,:)
     real(R8), allocatable :: sbuf(:), rbuf(:)
-    integer(I4) :: m, k, s, d, nb, g(4), r(4)
+    integer(I4) :: m, k, s, d, nb, g(4), r(4), nbs(4)
     character(len=MORPH_MSGLEN) :: msg
 
     call status%clear()
@@ -508,6 +518,15 @@ contains
             ' blocks here, 3 ghost layers)'
       call status%fail ( MORPH_ERR_SHAPE, msg )
       return
+    endif
+    if ( present(vls) ) then
+      if ( size(vls,1) /= grid%nbn .or. size(vls,2) /= grid%nbn .or. size(vls,3) /= nslots(grid) ) then
+        write(msg,'(A,I0,A,I0,A,I0,A,I0,A,I0,A)') 'level-set ghosts: V is ', size(vls,1), ' x ', size(vls,2), &
+              ' x ', size(vls,3), ' (the grid: ', grid%nbn, ' nodes per block side, ', nslots(grid), &
+              ' blocks here)'
+        call status%fail ( MORPH_ERR_SHAPE, msg )
+        return
+      endif
     endif
     m = NG*grid%nbn                                       ! values per strip
     allocate( sbuf(m*size(grid%send,2)), rbuf(sum(grid%rcount)) )
@@ -520,13 +539,18 @@ contains
     call exch%swap ( grid%scount, sbuf, grid%rcount, rbuf, status )
     if ( .not. status%ok() ) return
 
-    !$omp parallel do private(s,d,nb,k,g,r)
+    !$omp parallel do private(s,d,nb,k,g,r,nbs)
     do s = 1, size(grid%blk)
+      nbs = neighbours ( grid%nblk, grid%blk(s) )
       do d = 1, 4
         nb = grid%nbr(d,s)
         g  = ghost_box ( grid%nbn, d )
         if ( nb == 0 ) then                               ! the edge of the grid or of the band
-          call Morph_LS_Ghosts_Extrap ( w(:,:,s), (d+1)/2, 2 - mod(d,2) )
+          if ( nbs(d) /= 0 .and. present(vls) ) then     ! an inactive block, V given
+            call Morph_LS_Ghosts_Upwind ( w(:,:,s), vls(:,:,s), (d+1)/2, 2 - mod(d,2) )
+          else
+            call Morph_LS_Ghosts_Extrap ( w(:,:,s), (d+1)/2, 2 - mod(d,2) )
+          endif
         else if ( grid%owner(nb) == grid%me ) then        ! one of my blocks
           r = source_box ( grid%nbn, d )
           w(g(1):g(2), g(3):g(4), s) = w(r(1):r(2), r(3):r(4), grid%slot(nb))
@@ -542,7 +566,8 @@ contains
 
   !> One step of length dt on this rank's blocks phi(nbn, nbn, slot), V at
   !> their nodes vls(nbn, nbn, slot): Morph_LS_HJ_Step_Full on blocks, the
-  !> ghosts filled from the neighbouring blocks at every stage. A collective.
+  !> ghosts filled at every stage by Morph_LS_Halo_Fill with V (toward an
+  !> inactive block, Morph_LS_Ghosts_Upwind). A collective.
   !> First every rank checks its arguments and all share the verdicts:
   !> refused on every rank, phi untouched, when one rank refuses (its own
   !> message on that rank, the first refusing rank's code elsewhere): shapes
@@ -606,7 +631,7 @@ contains
     us = phi
     do stage = 1, 3
       w(1:n,1:n,:) = us
-      call Morph_LS_Halo_Fill ( grid, exch, w, status )
+      call Morph_LS_Halo_Fill ( grid, exch, w, status, vls )
       if ( .not. status%ok() ) return
       !$omp parallel do private(s)
       do s = 1, ns
