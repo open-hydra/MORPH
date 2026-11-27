@@ -3,10 +3,19 @@
 !> and the ghosts and the step on the active blocks only). The reference is
 !> an oracle written here on the whole grid: for each active block, the
 !> ghosts of a side are the whole grid's nodes beyond it when the block there
-!> is active, else the linear extrapolation of the block's own nodes
-!> (Morph_LS_Ghosts_Extrap); then the rate and the stage of Morph_LS_HJ; the
-!> other blocks keep their values. Every comparison is bit for bit (the 64
-!> bits of each value, NaN included):
+!> is active; at the edge of the grid the linear extrapolation of the block's
+!> own nodes (Morph_LS_Ghosts_Extrap); toward an inactive block, given V (a
+!> fill with V, and every stage of a step), Morph_LS_Ghosts_Upwind, else the
+!> linear one; then the rate and the stage of Morph_LS_HJ; the other blocks
+!> keep their values. Every comparison is bit for bit (the 64 bits of each
+!> value, NaN included):
+!>   * the ghosts toward an inactive block (Morph_LS_Ghosts_Upwind), on lines
+!>     of integers, exact with or without fused multiply-adds: linear where
+!>     the characteristics enter, quadratic where they leave, V = 0 and a
+!>     flat line quadratic, both sides of both axes, the other ghosts and the
+!>     corners untouched; on a field of reals, where every line enters, the
+!>     bits of Morph_LS_Ghosts_Extrap; a V of another shape refused by the
+!>     fill; the band edges of the steps' cases hold lines of both kinds;
 !>   * Init with an active set: the slots and the strips of Init followed by
 !>     an update to that set; refusals; no active block at all;
 !>   * the update: the set is what at least one rank asks for, the same on
@@ -15,8 +24,9 @@
 !>     different sizes are refused;
 !>   * the remap: the kept slots bit for bit in their new places, NaN in the
 !>     new ones, refusals;
-!>   * the band: the ghosts of every block after one fill are the oracle's,
-!>     the strips counted from the active pairs alone; the steps give the
+!>   * the band: the ghosts of every block after one fill without V and one
+!>     with V are the oracle's, the strips counted from the active pairs
+!>     alone; the steps give the
 !>     oracle's bits for active sets of every kind (all, none, one block, a
 !>     checkerboard, a ring, scattered), blocks of 3, 5 and 8 nodes, 1 to 4
 !>     ranks; over several steps the band follows a moving circle, blocks
@@ -64,8 +74,8 @@ program test_morph_ls_band
   use Morph_Types_m
   use Morph_Exchange
   use Morph_Exchange_Sim
-  use Morph_LS_HJ,   only: MORPH_LS_NG, Morph_LS_Ghosts_Extrap, Morph_LS_Rate, Morph_LS_RK3_Combine, &
-                           Morph_LS_HJ_Step_Full
+  use Morph_LS_HJ,   only: MORPH_LS_NG, Morph_LS_Ghosts_Extrap, Morph_LS_Ghosts_Upwind, Morph_LS_Rate, &
+                           Morph_LS_RK3_Combine, Morph_LS_HJ_Step_Full
   use Morph_LS_Grid
   use test_band_failing_exchange
 
@@ -90,6 +100,7 @@ program test_morph_ls_band
   call update_one_rank ()
   call update_exchange_fails ()
   call remap ()
+  call ghosts_upwind ()
   call halo_one_rank ()
   call steps_one_rank ()
   call front_one_rank ()
@@ -182,16 +193,19 @@ contains
 
 
   !> Block b of the whole grid cur with its ghosts as the band must read them:
-  !> beyond a side, the whole grid's nodes when the block there is active,
-  !> else the linear extrapolation of the block's own nodes; the corners
-  !> SENTINEL. Written here again from the layout of the kernels.
-  function oracle_block ( nbn, nblk, act, cur, b ) result ( wb )
+  !> beyond a side, the whole grid's nodes when the block there is active; at
+  !> the edge of the grid the linear extrapolation of the block's own nodes;
+  !> toward an inactive block, Morph_LS_Ghosts_Upwind from vfull (the whole
+  !> grid's V) when it is given, else the linear one; the corners SENTINEL.
+  !> Written here again from the layout of the kernels.
+  function oracle_block ( nbn, nblk, act, cur, b, vfull ) result ( wb )
     integer(I4), intent(in) :: nbn, nblk(2), b
     logical,     intent(in) :: act(:)
     real(R8),    intent(in) :: cur(:,:)
+    real(R8),    intent(in), optional :: vfull(:,:)
     real(R8), allocatable   :: wb(:,:)
-    integer(I4) :: ib, jb, i0, j0
-    logical :: there
+    integer(I4) :: ib, jb, i0, j0, d
+    logical :: inside(4), there(4)
     allocate( wb(1-NG:nbn+NG, 1-NG:nbn+NG) )
     wb = SENTINEL
     ib = mod(b-1, nblk(1)) + 1
@@ -199,34 +213,24 @@ contains
     i0 = (ib-1)*nbn
     j0 = (jb-1)*nbn
     wb(1:nbn, 1:nbn) = cur(i0+1:i0+nbn, j0+1:j0+nbn)
-    there = .false.
-    if ( ib > 1 ) there = act(b-1)
-    if ( there ) then
-      wb(1-NG:0, 1:nbn) = cur(i0+1-NG:i0, j0+1:j0+nbn)
-    else
-      call Morph_LS_Ghosts_Extrap ( wb, 1, 1 )
-    endif
-    there = .false.
-    if ( ib < nblk(1) ) there = act(b+1)
-    if ( there ) then
-      wb(nbn+1:nbn+NG, 1:nbn) = cur(i0+nbn+1:i0+nbn+NG, j0+1:j0+nbn)
-    else
-      call Morph_LS_Ghosts_Extrap ( wb, 1, 2 )
-    endif
-    there = .false.
-    if ( jb > 1 ) there = act(b-nblk(1))
-    if ( there ) then
-      wb(1:nbn, 1-NG:0) = cur(i0+1:i0+nbn, j0+1-NG:j0)
-    else
-      call Morph_LS_Ghosts_Extrap ( wb, 2, 1 )
-    endif
-    there = .false.
-    if ( jb < nblk(2) ) there = act(b+nblk(1))
-    if ( there ) then
-      wb(1:nbn, nbn+1:nbn+NG) = cur(i0+1:i0+nbn, j0+nbn+1:j0+nbn+NG)
-    else
-      call Morph_LS_Ghosts_Extrap ( wb, 2, 2 )
-    endif
+    inside = [ ib > 1, ib < nblk(1), jb > 1, jb < nblk(2) ]
+    there  = .false.
+    if ( inside(1) ) there(1) = act(b-1)
+    if ( inside(2) ) there(2) = act(b+1)
+    if ( inside(3) ) there(3) = act(b-nblk(1))
+    if ( inside(4) ) there(4) = act(b+nblk(1))
+    if ( there(1) ) wb(1-NG:0, 1:nbn)       = cur(i0+1-NG:i0, j0+1:j0+nbn)
+    if ( there(2) ) wb(nbn+1:nbn+NG, 1:nbn) = cur(i0+nbn+1:i0+nbn+NG, j0+1:j0+nbn)
+    if ( there(3) ) wb(1:nbn, 1-NG:0)       = cur(i0+1:i0+nbn, j0+1-NG:j0)
+    if ( there(4) ) wb(1:nbn, nbn+1:nbn+NG) = cur(i0+1:i0+nbn, j0+nbn+1:j0+nbn+NG)
+    do d = 1, 4
+      if ( there(d) ) cycle
+      if ( inside(d) .and. present(vfull) ) then
+        call Morph_LS_Ghosts_Upwind ( wb, vfull(i0+1:i0+nbn, j0+1:j0+nbn), (d+1)/2, 2 - mod(d,2) )
+      else
+        call Morph_LS_Ghosts_Extrap ( wb, (d+1)/2, 2 - mod(d,2) )
+      endif
+    enddo
   end function oracle_block
 
 
@@ -247,7 +251,7 @@ contains
         cur = u
         do b = 1, nblk(1)*nblk(2)
           if ( .not. act(b) ) cycle
-          wb = oracle_block ( nbn, nblk, act, cur, b )
+          wb = oracle_block ( nbn, nblk, act, cur, b, vls )
           i0 = mod(b-1, nblk(1)) * nbn
           j0 = ((b-1)/nblk(1)) * nbn
           call Morph_LS_Rate ( wb, vls(i0+1:i0+nbn, j0+1:j0+nbn), H, rate )
@@ -276,14 +280,16 @@ contains
 
   !> The ghosts of this rank's slots after one fill are the oracle's for their
   !> blocks: the neighbours' nodes where the neighbour is active, the
-  !> extrapolation elsewhere, the corners untouched.
-  logical function ghosts_ok ( grid, full, w ) result ( ok )
+  !> extrapolation elsewhere (from vfull, the whole grid's V, when the fill had
+  !> V), the corners untouched.
+  logical function ghosts_ok ( grid, full, w, vfull ) result ( ok )
     type(morph_ls_grid_t), intent(in) :: grid
     real(R8),              intent(in) :: full(:,:), w(1-NG:,1-NG:,:)
+    real(R8), optional,    intent(in) :: vfull(:,:)
     integer(I4) :: s
     ok = .true.
     do s = 1, size(grid%blk)
-      if ( .not. same( w(:,:,s), oracle_block ( grid%nbn, grid%nblk, grid%active, full, grid%blk(s) ) ) ) &
+      if ( .not. same( w(:,:,s), oracle_block ( grid%nbn, grid%nblk, grid%active, full, grid%blk(s), vfull ) ) ) &
         ok = .false.
     enddo
   end function ghosts_ok
@@ -314,8 +320,9 @@ contains
 
 
   !> One rank's part of a band of fixed active set: its grid, its blocks of
-  !> phi0 and v0, one fill of the ghosts (halo: they are the oracle's), the
-  !> strips counted (cnt), nsteps steps, its blocks gathered into out.
+  !> phi0 and v0, one fill of the ghosts without V and one with V (halo: both
+  !> are the oracle's), the strips counted (cnt), nsteps steps, its blocks
+  !> gathered into out.
   subroutine band_advance ( exch, nbn, nblk, owner, act, phi0, v0, nsteps, out, halo, cnt, st )
     class(morph_exchange_t), intent(inout) :: exch
     integer(I4),             intent(in)    :: nbn, nblk(2), owner(:), nsteps
@@ -343,6 +350,11 @@ contains
     call Morph_LS_Halo_Fill ( grid, exch, w, st )
     if ( .not. st%ok() ) return
     halo = ghosts_ok ( grid, phi0, w )
+    w = SENTINEL
+    w(1:nbn,1:nbn,:) = phi
+    call Morph_LS_Halo_Fill ( grid, exch, w, st, vb )
+    if ( .not. st%ok() ) return
+    halo = halo .and. ghosts_ok ( grid, phi0, w, v0 )
     cnt  = counts_ok ( grid )
     do k = 1, nsteps
       call Morph_LS_HJ_Step ( grid, exch, phi, vb, DT, st )
@@ -736,6 +748,177 @@ contains
 
 
   ! ===========================================================================
+  !> Morph_LS_Ghosts_Upwind on its own; the fill's refusal of a V of another
+  !> shape; the kinds of the band edges in the steps' cases.
+  subroutine ghosts_upwind ()
+    type(morph_exchange_serial_t) :: ex
+    type(morph_ls_grid_t) :: g
+    type(morph_status_t)  :: st
+    real(R8) :: base(1-NG:4+NG, 1-NG:4+NG), baset(1-NG:4+NG, 1-NG:4+NG), a(1-NG:4+NG, 1-NG:4+NG)
+    real(R8) :: r(1-NG:4+NG, 1-NG:4+NG), v(4,4), lo(NG,4), hi(NG,4)
+    real(R8), allocatable :: phi0(:,:), v0(:,:), u8(:,:), e8(:,:), x8(:,:), v8(:,:), w(:,:,:), vbad(:,:,:)
+    integer(I4) :: i, j, k, axis, side, nin, nout, nin2, nout2
+    logical :: ok
+
+    ! lines 1-3 (i-1)^2, line 4 a flat start; V at the two edge nodes -1, +1,
+    ! 0, -1, the opposite sign at the nodes next to them (V is read at the
+    ! edge node only)
+    base = SENTINEL
+    do j = 1, 4
+      do i = 1, 4
+        base(i,j) = real((i-1)**2, R8)
+      enddo
+    enddo
+    base(1:4,4) = [ 5.0_R8, 5.0_R8, 7.0_R8, 12.0_R8 ]
+    v(:,1) = [ -1.0_R8,  1.0_R8,  1.0_R8, -1.0_R8 ]
+    v(:,2) = [  1.0_R8, -1.0_R8, -1.0_R8,  1.0_R8 ]
+    v(:,3) =    0.0_R8
+    v(:,4) = [ -1.0_R8,  1.0_R8,  1.0_R8, -1.0_R8 ]
+    ! low side: leaves, enters, V = 0, flat (V d = -0); high side: enters, leaves, V = 0, enters
+    lo(:,1) = [  1.0_R8,  4.0_R8,  9.0_R8 ]
+    lo(:,2) = [ -1.0_R8, -2.0_R8, -3.0_R8 ]
+    lo(:,3) = [  1.0_R8,  4.0_R8,  9.0_R8 ]
+    lo(:,4) = [  7.0_R8, 11.0_R8, 17.0_R8 ]
+    hi(:,1) = [ 14.0_R8, 19.0_R8, 24.0_R8 ]
+    hi(:,2) = [ 16.0_R8, 25.0_R8, 36.0_R8 ]
+    hi(:,3) = [ 16.0_R8, 25.0_R8, 36.0_R8 ]
+    hi(:,4) = [ 17.0_R8, 22.0_R8, 27.0_R8 ]
+    baset = SENTINEL
+    baset(1:4,1:4) = transpose( base(1:4,1:4) )
+    do axis = 1, 2
+      do side = 1, 2
+        if ( axis == 1 ) then
+          a = base
+          r = base
+          call Morph_LS_Ghosts_Upwind ( a, v, 1, side )
+          do k = 1, NG
+            if ( side == 1 ) then
+              r(1-k,1:4) = lo(k,:)
+            else
+              r(4+k,1:4) = hi(k,:)
+            endif
+          enddo
+        else
+          a = baset
+          r = baset
+          call Morph_LS_Ghosts_Upwind ( a, transpose(v), 2, side )
+          do k = 1, NG
+            if ( side == 1 ) then
+              r(1:4,1-k) = lo(k,:)
+            else
+              r(1:4,4+k) = hi(k,:)
+            endif
+          enddo
+        endif
+        call check ( same( a, r ), 'upwind ghosts on integers, axis ' // achar(48+axis) // ' side ' // &
+                     achar(48+side) // ': linear where the line enters, quadratic where it leaves, V = 0 and ' // &
+                     'a flat line quadratic, the rest untouched' )
+      enddo
+    enddo
+
+    ! on reals, every line entering: the bits of the linear extrapolation
+    call fields ( 8, 8, phi0, v0 )
+    allocate( u8(1-NG:8+NG, 1-NG:8+NG), v8(8,8) )
+    u8 = SENTINEL
+    u8(1:8,1:8) = phi0
+    ok = .true.
+    do axis = 1, 2
+      do side = 1, 2
+        v8 = 1.0_R8
+        do j = 1, 8
+          if ( axis == 1 .and. side == 1 ) v8(1,j) =  sign( 1.0_R8, phi0(2,j) - phi0(1,j) )
+          if ( axis == 1 .and. side == 2 ) v8(8,j) = -sign( 1.0_R8, phi0(8,j) - phi0(7,j) )
+          if ( axis == 2 .and. side == 1 ) v8(j,1) =  sign( 1.0_R8, phi0(j,2) - phi0(j,1) )
+          if ( axis == 2 .and. side == 2 ) v8(j,8) = -sign( 1.0_R8, phi0(j,8) - phi0(j,7) )
+        enddo
+        e8 = u8
+        x8 = u8
+        call Morph_LS_Ghosts_Upwind ( e8, v8, axis, side )
+        call Morph_LS_Ghosts_Extrap ( x8, axis, side )
+        if ( .not. same( e8, x8 ) ) ok = .false.
+      enddo
+    enddo
+    call check ( ok, 'upwind ghosts on reals, every line entering: the bits of the linear extrapolation' )
+
+    ! the fill refuses a V of another shape along each of its axes, w untouched
+    call Morph_LS_Grid_Init ( g, 3, [2,2], H, [0,0,0,0], ex, st, [ .true., .false., .true., .true. ] )
+    allocate( w(1-NG:3+NG, 1-NG:3+NG, 3) )
+    w = SENTINEL
+    ok = .true.
+    do k = 1, 3
+      if ( allocated(vbad) ) deallocate( vbad )
+      if ( k == 1 ) allocate( vbad(2,3,3) )
+      if ( k == 2 ) allocate( vbad(3,2,3) )
+      if ( k == 3 ) allocate( vbad(3,3,2) )
+      vbad = -1.0_R8
+      call Morph_LS_Halo_Fill ( g, ex, w, st, vbad )
+      if ( .not. ( st%code == MORPH_ERR_SHAPE .and. index(st%message, 'level-set ghosts: V is') > 0 ) ) ok = .false.
+    enddo
+    call check ( ok .and. index(st%message, 'V is 3 x 3 x 2') > 0 .and. all( w == SENTINEL ), &
+                 'ghosts with a V of 2 x 3 x 3, 3 x 2 x 3 or 3 x 3 x 2 for 3 x 3 x 3: refused, w untouched' )
+
+    ! the band edges of two steps' cases hold lines that enter and lines that leave
+    call fields ( 30, 25, phi0, v0 )
+    call edge_kinds ( 5, [6,5], pattern(6, [6,5]), phi0, v0, nin, nout )
+    call fields ( 18, 15, phi0, v0 )
+    call edge_kinds ( 3, [6,5], pattern(4, [6,5]), phi0, v0, nin2, nout2 )
+    call check ( nin > 0 .and. nout > 0 .and. nin2 > 0 .and. nout2 > 0, &
+                 'the band edges of the scattered blocks of 5 and of the checkerboard of 3 hold lines of both kinds' )
+  end subroutine ghosts_upwind
+
+
+  !> The lines across the sides of the active blocks that face an inactive
+  !> block inside the grid: nin where the characteristics enter (the rule of
+  !> Morph_LS_Ghosts_Upwind, V at the edge node), nout where they leave.
+  subroutine edge_kinds ( nbn, nblk, act, phi, v, nin, nout )
+    integer(I4), intent(in)  :: nbn, nblk(2)
+    logical,     intent(in)  :: act(:)
+    real(R8),    intent(in)  :: phi(:,:), v(:,:)
+    integer(I4), intent(out) :: nin, nout
+    integer(I4) :: b, ib, jb, i0, j0, t, e, q
+    logical :: inflow
+    nin  = 0
+    nout = 0
+    do b = 1, nblk(1)*nblk(2)
+      if ( .not. act(b) ) cycle
+      ib = mod(b-1, nblk(1)) + 1
+      jb = (b-1)/nblk(1) + 1
+      i0 = (ib-1)*nbn
+      j0 = (jb-1)*nbn
+      do t = 1, nbn
+        if ( ib > 1 ) then
+          if ( .not. act(b-1) ) then
+            e = i0+1; q = j0+t
+            inflow = v(e,q) * (phi(e+1,q) - phi(e,q)) > 0.0_R8
+            if ( inflow ) then; nin = nin + 1; else; nout = nout + 1; endif
+          endif
+        endif
+        if ( ib < nblk(1) ) then
+          if ( .not. act(b+1) ) then
+            e = i0+nbn; q = j0+t
+            inflow = v(e,q) * (phi(e,q) - phi(e-1,q)) < 0.0_R8
+            if ( inflow ) then; nin = nin + 1; else; nout = nout + 1; endif
+          endif
+        endif
+        if ( jb > 1 ) then
+          if ( .not. act(b-nblk(1)) ) then
+            e = j0+1; q = i0+t
+            inflow = v(q,e) * (phi(q,e+1) - phi(q,e)) > 0.0_R8
+            if ( inflow ) then; nin = nin + 1; else; nout = nout + 1; endif
+          endif
+        endif
+        if ( jb < nblk(2) ) then
+          if ( .not. act(b+nblk(1)) ) then
+            e = j0+nbn; q = i0+t
+            inflow = v(q,e) * (phi(q,e) - phi(q,e-1)) < 0.0_R8
+            if ( inflow ) then; nin = nin + 1; else; nout = nout + 1; endif
+          endif
+        endif
+      enddo
+    enddo
+  end subroutine edge_kinds
+
+
   !> Active sets on a grid of nblk blocks: all, none, one, a checkerboard, a
   !> ring, scattered.
   function pattern ( kind, nblk ) result ( act )

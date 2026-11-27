@@ -271,8 +271,10 @@ work array, whose corners no stencil reads.
 hold phi and move, the others hold nothing. The active set is the same on every rank: all the blocks,
 or the set given to `Morph_LS_Grid_Init`, then the set of each `Morph_LS_Grid_Update`, a collective in
 which a block is active when at least one rank asks for it (the rank whose block the front approaches
-asks for the blocks beyond it, whoever owns them). An inactive neighbour is the edge of the grid: the
-ghosts toward it are extrapolated from the block's own nodes and no message carries them. The update
+asks for the blocks beyond it, whoever owns them). The ghosts toward an inactive neighbour come from
+the block's own nodes and no message carries them: at every stage of a step `Morph_LS_Ghosts_Upwind`
+takes them line by line from the speed, linear where the characteristics enter the block and quadratic
+where they leave it (at the edge of the grid they stay linear, as on the whole grid). The update
 returns, for each new slot, the slot its block had before (0 for a block just activated), and
 `Morph_LS_Grid_Remap` moves any field of slots with it, leaving a NaN in the new slots for the caller to
 fill. Every active node moves at its full speed. There is no window that slows the nodes far from the
@@ -281,17 +283,39 @@ levels ahead of a moving front pile up against it. The band then differs from th
 the extrapolated ghosts at its edge and the values a block starts from; the caller chooses how far
 from the front the inactive blocks stay, asks for the blocks and fills the new ones.
 
+Why two kinds of ghosts: what the ghosts carry moves into the band where the characteristics enter
+it (behind the front) and out of it where they leave (ahead of the front). In a Python emulation of
+this scheme (240 x 240 nodes, blocks of 8 x 8, a block active when the front comes within 9.5 h of its
+nodes, h the node spacing; times are the distance the front has moved, in h), on an expanding circle
+after 39.9 h the band's front was 8.70e-5 h from the whole grid's with linear ghosts, 1.61e-6 h with
+exact ghosts where the characteristics leave and linear ones where they enter, and still 8.70e-5 h
+the other way round. Quadratic ghosts on every side brought it to 5.34e-7 h, but elsewhere the band
+drifted 8100 h away from the whole grid (1330 h after 60 h on two merging circles). The switched
+ghosts brought the front 30.4 to 109.5 times closer to the whole grid's than linear ones (an
+expanding and a shrinking circle after 39.9 h and 75 h, an expanding circle with a speed from -1 to
+1/2 after 39.9 h) and 2.8 times on the merging circles after 60 h, where the side behind the front
+matters too; the largest distance elsewhere was the same as with linear ones, to three digits. With
+the switched ghosts, blocks activated within 18.5 h of the front, filled with the exact solution and
+dropped beyond 26.5 h, the band's front stayed within 4.3% of the whole grid's own error against the
+exact solution every 6 h and at the end, on the expanding and the shrinking circle (to 39.9 h) and on
+the merging circles (to 54 h); with linear ghosts no margin up to 24.5 h did (24.6% on the merging
+circles at 24.5 h).
+
 The test checks the band against an oracle written in the test on the whole grid (the ghosts of a
-side from the whole grid when the block beyond is active, else extrapolated; then the kernels'
-rate and stage), itself the step on the whole grid when every block is active.
+side from the whole grid when the block beyond is active, else extrapolated as above; then the
+kernels' rate and stage), itself the step on the whole grid when every block is active, and
+`Morph_LS_Ghosts_Upwind` alone on lines of integers, whose ghosts are exact in any build.
 
 Measured with gfortran 13.3 on aarch64, with the release flags (fused multiply-adds allowed) and with
 `-ffp-contract=off`: in every case of the test the band gives the oracle's bits, at 1 and 8 threads, and
-the oracle with every block active gives the bits of the step on the whole grid. Each of the test's 55
-checks fails under at least one of 38 deliberate changes of the band's code (one of them in the ghost fill
-it shares with the grid of blocks), and all 38 fail the test: 35 with a failed check, 2 by a crash (an
-allocation not released before the next, a field read before it is allocated) and 1 by the time limit (a
-rank that does not take another rank's refusal leaves the others waiting).
+the oracle with every block active gives the bits of the step on the whole grid. Each of the test's 62
+checks but one fails under at least one of 72 deliberate changes of the band's code (25 in
+`Morph_LS_Ghosts_Upwind`, 9 in the ghost fill it shares with the grid of blocks), and all 72 fail the
+test: 69 with a failed check, 2 by a crash (an allocation not released before the next, a field read
+before it is allocated) and 1 by the time limit (a rank that does not take another rank's refusal
+leaves the others waiting). The other check is about the test's own fields: that the edges of two of
+its bands hold lines where the characteristics enter and lines where they leave; it fails, alone, when
+their speed is zero.
 
 ## The driver
 

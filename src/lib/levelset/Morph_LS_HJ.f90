@@ -11,7 +11,10 @@
 !> nodes of each line (Morph_LS_Ghosts_Extrap), and Morph_LS_HJ_Step_Full
 !> makes one step. A grid split into blocks fills them from the neighbouring
 !> blocks between the stages, so the three stages are exposed one by one:
-!> fill the ghosts, Morph_LS_Rate, Morph_LS_RK3_Combine.
+!> fill the ghosts, Morph_LS_Rate, Morph_LS_RK3_Combine. Toward a block that
+!> does not move (the edge of a narrow band) Morph_LS_Ghosts_Upwind fills them
+!> line by line from the speed: linear where the characteristics enter the
+!> block, quadratic where they leave it.
 !>
 !> THE SCHEME, at an interior node and along one axis, with the backward
 !> differences D(m) = (u(m) - u(m-1))/h:
@@ -56,7 +59,7 @@ module Morph_LS_HJ
   real(R8), parameter :: C23   = 2.0_R8 / 3.0_R8
 
   public :: Morph_LS_WenoZ
-  public :: Morph_LS_Ghosts_Extrap, Morph_LS_Ghosts_Extrap_All
+  public :: Morph_LS_Ghosts_Extrap, Morph_LS_Ghosts_Extrap_All, Morph_LS_Ghosts_Upwind
   public :: Morph_LS_Derivs, Morph_LS_Godunov, Morph_LS_Grad_Godunov
   public :: Morph_LS_Rate, Morph_LS_RK3_Combine
   public :: Morph_LS_HJ_Step_Full
@@ -151,6 +154,73 @@ contains
       enddo
     enddo
   end subroutine Morph_LS_Ghosts_Extrap_All
+
+
+  !> The ghosts of one side of one axis (side 1: low, 2: high) toward a block
+  !> that does not move, line by line from v, the speed at the interior nodes
+  !> of u (v(nx, ny)). First the linear extrapolation of
+  !> Morph_LS_Ghosts_Extrap on every line; then, where the characteristics
+  !> (along v grad u / |grad u|) do not enter across that side (low side
+  !> v (u(2) - u(1)) > 0 and high side v (u(nx) - u(nx-1)) < 0 enter,
+  !> strictly: v = 0 and a flat line do not), the quadratic term through the
+  !> last three interior nodes is added: on the low side, k = 1..NG,
+  !>   u(1-k) = [u(1) - k (u(2) - u(1))] + k(k+1)/2 (u(1) - 2 u(2) + u(3)),
+  !> the bracket being the linear ghost as stored. So the lines that enter
+  !> keep the bits of Morph_LS_Ghosts_Extrap in any build. Where the
+  !> characteristics leave, what the ghosts carry moves out of the block,
+  !> and the quadratic follows the curvature of the level sets; where they
+  !> enter, it moves in, and with a quadratic there a narrow band drifted
+  !> away from the whole grid (the README's narrow band gives the numbers).
+  !> Lines across the interior only; the corner ghosts are left as they are.
+  !> Needs at least three interior nodes along the axis.
+  subroutine Morph_LS_Ghosts_Upwind ( u, v, axis, side )
+    real(R8),    intent(inout) :: u(1-MORPH_LS_NG:, 1-MORPH_LS_NG:)
+    real(R8),    intent(in)    :: v(:,:)
+    integer(I4), intent(in)    :: axis, side
+    integer(I4) :: nx, ny, i, j, k
+    real(R8)    :: c
+
+    call Morph_LS_Ghosts_Extrap ( u, axis, side )
+    nx = size(u,1) - 2*MORPH_LS_NG
+    ny = size(u,2) - 2*MORPH_LS_NG
+    if ( axis == 1 ) then
+      !$omp parallel do private(j,k,c)
+      do j = 1, ny
+        if ( side == 1 ) then
+          if ( v(1,j) * (u(2,j) - u(1,j)) > 0.0_R8 ) cycle              ! enters: linear
+          c = u(1,j) - 2.0_R8*u(2,j) + u(3,j)
+          do k = 1, MORPH_LS_NG
+            u(1-k,j) = u(1-k,j) + real(k*(k+1)/2,R8)*c
+          end do
+        else
+          if ( v(nx,j) * (u(nx,j) - u(nx-1,j)) < 0.0_R8 ) cycle         ! enters: linear
+          c = u(nx,j) - 2.0_R8*u(nx-1,j) + u(nx-2,j)
+          do k = 1, MORPH_LS_NG
+            u(nx+k,j) = u(nx+k,j) + real(k*(k+1)/2,R8)*c
+          end do
+        endif
+      enddo
+      !$omp end parallel do
+    else
+      !$omp parallel do private(i,k,c)
+      do i = 1, nx
+        if ( side == 1 ) then
+          if ( v(i,1) * (u(i,2) - u(i,1)) > 0.0_R8 ) cycle              ! enters: linear
+          c = u(i,1) - 2.0_R8*u(i,2) + u(i,3)
+          do k = 1, MORPH_LS_NG
+            u(i,1-k) = u(i,1-k) + real(k*(k+1)/2,R8)*c
+          end do
+        else
+          if ( v(i,ny) * (u(i,ny) - u(i,ny-1)) < 0.0_R8 ) cycle         ! enters: linear
+          c = u(i,ny) - 2.0_R8*u(i,ny-1) + u(i,ny-2)
+          do k = 1, MORPH_LS_NG
+            u(i,ny+k) = u(i,ny+k) + real(k*(k+1)/2,R8)*c
+          end do
+        endif
+      enddo
+      !$omp end parallel do
+    endif
+  end subroutine Morph_LS_Ghosts_Upwind
 
 
   !> The one-sided WENO-Z derivatives phi^- (dm) and phi^+ (dp) along one axis
