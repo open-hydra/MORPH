@@ -133,7 +133,7 @@ either way. The `guard_embed` test builds such a parent both ways.
 ## Test
 
 ```bash
-ctest --test-dir build -j 2              # 72 tests in an OpenMP build
+ctest --test-dir build -j 2              # 75 tests in an OpenMP build
 ctest --test-dir build -L unit           # or -L guard, -L driver
 ./test/run_morph_guards.sh --build build # the guards without ctest, plus the unit programs built
                                          # standalone with gfortran -O2, as FUSS's script does
@@ -142,14 +142,14 @@ ctest --test-dir build -L unit           # or -L guard, -L driver
 
 | label | tests | what they check |
 |---|---|---|
-| `unit` | 36 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface`, `test_morph_bc`, `test_morph_ls` (the level-set kernels, below), `test_morph_ls_blocks` (the level-set grid of blocks and its exchanges, below) and `test_morph_ls_band` (its narrow band, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. `test_morph_surface` and `test_morph_bc` write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
+| `unit` | 39 | `test_morph_block`, `test_morph_gcl` and `test_morph_nodeshift` (FUSS's), `test_morph_smooth` (the smoothed interior, below), `test_morph_events`, `test_morph_given`, `test_morph_run`, `test_morph_surface`, `test_morph_bc`, `test_morph_ls` (the level-set kernels, below), `test_morph_ls_blocks` (the level-set grid of blocks and its exchanges, below), `test_morph_ls_band` (its narrow band, below) and `test_morph_ls_reinit_blocks` (the reinitialisation on blocks, below) at 1 and 8 threads, plus the 1-thread and 8-thread outputs compared byte for byte. `test_morph_surface` and `test_morph_bc` write MORPH boundary files and read them with the driver's reader (MORPHBC); each run works in a directory of its own |
 | `guard` | 8 | `no-fuss`: no source uses a `FUSS_` module. `no-stop`: no `stop` or `error stop` in `src/lib`. `no-io`: no `print`, no `write`/`read` on a unit, no `open`/`close`/`inquire`/`flush` in `src/lib`. `lib-isolated`: `src/lib` uses only `iso_fortran_env`, `omp_lib` and `Morph_*`. `wall-clean`: the library compiles standalone and `gfortran -Wall` prints nothing. `wall-clean-app`: the same for the driver against the tree's modules. `build-config`: the tree matches the preset. `embed`: MORPHL in another CMake project (`test/embed`). |
 | `driver` | 28 | `bin/MORPH` on a three-block warped mesh (`generate.py`: 4x6x4 + 6x2x4 + 6x4x4 cells, three conforming interfaces), one run per law at 1 and 8 threads, three more for the nodeshift variants (the uniform recession smoothed, a bumped recession smoothed, the same bump under the line law), then the two outputs of each compared, plus seven runs that must be refused. A nodeshift run must also show its interior in `run.log`, and a smoothed one the smoothing's settings and its report under the step lines |
 
 **On GitHub.** `.github/workflows/ctest.yml` runs the same build (`install.sh build --compilers=gnu
 --use-openmp`, against ORION `5c32b73` and FiNeR `09adb98` cloned from GitHub) and all the tests above
 on Ubuntu 24.04: for every pull request to `main`, every push to `main`, the merge queue, and by hand.
-It fails when fewer than 72 tests are registered: without python3 >= 3.6, CMake drops the driver tests
+It fails when fewer than 75 tests are registered: without python3 >= 3.6, CMake drops the driver tests
 with only a warning. Raise that floor when tests are added.
 
 **The driver gate.** In every step of every run the discrete-GCL residual that MORPH logs must stay at
@@ -232,7 +232,9 @@ Measured with gfortran 13.3 on aarch64, release flags:
   five gfortran builds spread them by 3.1e-16, a sum in another order could move them by 2.1e-12).
 
 Each of the test's 40 checks fails under at least one of 67 deliberate changes of the kernels, and 66
-of the 67 fail the test. The other one cannot change any result: the Godunov branch at the nodes
+of the 67 fail the test, before and after the reinitialisation's kernels were shared with the grid of
+blocks (one change had to move: the correction's gradient, taken from phi before the step, is now
+taken from phi0, which the kernel sees). The other one cannot change any result: the Godunov branch at the nodes
 where V = 0, whose rate -V |grad phi| is a zero whose sign comes from V alone (|grad phi| >= 0).
 
 **The level-set grid of blocks** (`levelset/Morph_LS_Grid.f90`, `parallel/`, `test_morph_ls_blocks`)
@@ -316,6 +318,62 @@ before it is allocated) and 1 by the time limit (a rank that does not take anoth
 leaves the others waiting). The other check is about the test's own fields: that the edges of two of
 its bands hold lines where the characteristics enter and lines where they leave; it fails, alone, when
 their speed is zero.
+
+**The reinitialisation on blocks** (`levelset/Morph_LS_Reinit.f90`, `test_morph_ls_reinit_blocks`)
+runs the reinitialisation and its trigger on the grid of blocks, every block active or a band. The
+computations at the nodes are kernels on one block with its three ghost layers and a flag for each
+side: a side that faces the edge of the grid or an inactive block is an edge, where the gradients are
+one-sided and no node is cut, as on the edges of the whole grid. The routines on the whole grid call
+the same kernels on one block with four edges. On blocks, `Morph_LS_Halo_Fill` fills the ghosts
+without V (the nodes of the block beyond, linear toward an inactive block and at the edge of the
+grid): those of phi0 once, then at every step those of phi and, with the correction, those of the
+step; phi is assigned at the end only, so a refusal or a failed exchange leaves it untouched on every
+rank. With every block active the reinitialisation on blocks gives the bits of the whole grid's, for
+any blocks, any split among ranks and any number of threads. On a band, a node's value after k steps
+depends only on the nodes within L1 distance 4k (WENO-Z reads 3 nodes along each axis, the
+correction one more): the nodes farther than that from every inactive node get the bits of the whole
+grid started from the same phi. When the blocks are activated within M of the front, a node within
+2 h of the front is farther than M - 2 h from every inactive node (L1 is at least the distance), so it
+keeps those bits while 4 iters <= M/h - 2: with the band's margin of 18.5 h, up to 4 iterations, the
+default.
+
+The measure sums each block in node order, then the blocks in block order with the exchange's
+ordered sum: the same bits on every rank, for any split and any number of ranks and threads, and on
+one block covering the grid the bits of the whole grid. On several blocks the additions come in
+another order than on the whole grid, which moves the last bits (within 2 (n+1) u E, n the nodes in
+the band, u = 2^-53). Every rank checks its own arguments and all share their verdicts in one
+allgather; iters, beta and the trigger's threshold are compared between the ranks bit for bit, since
+a rank given other iters would make another number of exchanges and leave the others waiting.
+
+In a Python emulation of these kernels on the cases of the narrow band (240 x 240 nodes, blocks of
+8 x 8 active within 18.5 h of an expanding circle after 39.9 h, 304 of 900, of a shrinking one after
+39.9 h, 180, and of two merging circles after 36 h, 364; phi the exact distance times a factor from 1
+to 2, so that the reinitialisation has work to do), 4 and 6 iterations on the band and on the whole
+grid from the same phi: no node farther than 4 iters from the inactive nodes differed in its bits, the
+farthest that differed was at L1 distance 8 and 12, and none of the 676 to 1370 nodes within 2 h of
+the front differed; E on the band had the bits of E on every block. Built with `-ffp-contract=off`,
+the Fortran code gives the emulation's bits in four cases (scattered blocks of 5 with and without the
+correction, every block of 4, a checkerboard of blocks of 3), at 1 and 8 threads.
+
+The test checks, bit for bit: every block active against the whole grid (blocks of 3, 5 and 8; 4
+steps with the correction, 3 without, 0); bands (one block alone, a checkerboard, a frame, scattered
+blocks, a ring) against an oracle written in the test on the whole grid, which gives each block the
+ghosts the band reads and calls the public kernels; the reach after 2 and 4 steps; the measure against
+the oracle's sum and the whole grid; 2 to 4 simulated ranks, one of them with no active block,
+against one; the trigger below, at and above its threshold; the refusals, phi untouched; an exchange
+that fails at each of its collectives, and the number of collectives of each kind. One check has a
+single node in the band, at a corner of the grid, so that E is that node's term alone: across a
+linearly extrapolated ghost the central difference is the one-sided one in exact arithmetic, and the
+sums of the other checks absorb the rounding by which they differ. Measured with gfortran 13.3 on
+aarch64, with the release flags and with `-ffp-contract=off`: its 48 checks pass at 1 and 8 threads,
+with the same output (36 without OpenMP, the simulated ranks skipped). Each of the 48 fails under at
+least one of 125 deliberate changes of `Morph_LS_Reinit`. The test catches 81 of them (75 with a
+failed check, 4 by a crash, 2 by the time limit: ranks that do not compare their iters make
+different numbers of exchanges and wait for each other), 64 that `test_morph_ls` does not; the two
+together catch 121. The other 4 cannot change any result: each drops the setting of values that
+nothing reads (the ghosts of the measure and of phi0 on the whole grid, whose sides are all edges;
+the ghost corners of phi0 on blocks; the distance of the subcell fix on edge nodes, which are never
+cut), and each passes the whole suite.
 
 ## The driver
 

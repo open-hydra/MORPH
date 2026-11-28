@@ -96,8 +96,8 @@ domain/Morph_Domain.f90
 surface/Morph_Surface.f90
 surface/Morph_Fixed.f90
 levelset/Morph_LS_HJ.f90
-levelset/Morph_LS_Reinit.f90
 levelset/Morph_LS_Grid.f90
+levelset/Morph_LS_Reinit.f90
 run/Morph_Run.f90
 Morph_API.f90
 "
@@ -278,9 +278,10 @@ for guard in "${GUARDS[@]}"; do
   #     nodeshift law and its smoothed interior, the event list, the given
   #     law, the one-call run, the surface, the reader of the MORPH boundary
   #     file, the level-set kernels and the level-set grid of blocks with its
-  #     exchanges; 1 and 8 threads must print the same. A program that
-  #     waits for ever (a simulated rank left at a barrier) is stopped after
-  #     UNIT_TIMEOUT seconds where coreutils' timeout exists.
+  #     exchanges, its narrow band and its reinitialisation; 1 and 8 threads
+  #     must print the same. A program that waits for ever (a simulated rank
+  #     left at a barrier) is stopped after UNIT_TIMEOUT seconds where
+  #     coreutils' timeout exists.
   #     The surface and the reader tests read files with the driver's reader,
   #     which uses nothing but the library, so it is compiled with them.
   # ---------------------------------------------------------------------------
@@ -292,7 +293,7 @@ for guard in "${GUARDS[@]}"; do
     command -v timeout >/dev/null 2>&1 && TMO="timeout $UNIT_TIMEOUT"
     for prog in test_morph_gcl test_morph_block test_morph_nodeshift test_morph_smooth test_morph_events \
                 test_morph_given test_morph_run test_morph_surface test_morph_bc test_morph_ls \
-                test_morph_ls_blocks test_morph_ls_band; do
+                test_morph_ls_blocks test_morph_ls_band test_morph_ls_reinit_blocks; do
       extra=""
       case $prog in test_morph_surface|test_morph_bc) extra="$APP/io/Morph_BC_IO.f90" ;; esac
       if ( cd "$WORK/units" && $FC -O2 -fopenmp -fimplicit-none -o "$prog" \
