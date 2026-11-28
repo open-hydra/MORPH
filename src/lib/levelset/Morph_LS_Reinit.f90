@@ -418,7 +418,9 @@ contains
   end subroutine share_verdicts
 
 
-  !> This rank's verdict on phi(nbn, nbn, slot) and the exchange.
+  !> This rank's verdict on the grid, phi(nbn, nbn, slot) and the exchange.
+  !> A grid not initialised (its Init refused or never called) is refused
+  !> before any size of its arrays is taken.
   subroutine check_grid_args ( grid, exch, phi, what, code, msg )
     type(morph_ls_grid_t),   intent(in)    :: grid
     class(morph_exchange_t), intent(inout) :: exch
@@ -428,10 +430,15 @@ contains
     character(len=*),        intent(out)   :: msg
     integer(I4) :: n, ns
 
-    n  = grid%nbn
-    ns = size(grid%blk)
     code = MORPH_OK
     msg  = ''
+    if ( .not. allocated(grid%blk) ) then
+      code = MORPH_ERR_SHAPE
+      msg  = what // ': the grid is not initialised'
+      return
+    endif
+    n  = grid%nbn
+    ns = size(grid%blk)
     if ( size(phi,1) /= n .or. size(phi,2) /= n .or. size(phi,3) /= ns ) then
       code = MORPH_ERR_SHAPE
       write(msg,'(A,A,I0,A,I0,A,I0,A,I0,A,I0,A)') what, ': phi is ', size(phi,1), ' x ', size(phi,2), ' x ', &
@@ -450,9 +457,9 @@ contains
   !> then the sums and the counts of the active blocks in block order
   !> (ordered_sum); e = 0 when no node is in the band. A collective; the same
   !> e on every rank. Refused on every rank, e = 0, when one rank refuses:
-  !> shapes that are not the grid's (MORPH_ERR_SHAPE), an exchange that is
-  !> not the grid's (MORPH_ERR_EXCHANGE); an exchange that fails returns its
-  !> status.
+  !> a grid not initialised or shapes that are not the grid's
+  !> (MORPH_ERR_SHAPE), an exchange that is not the grid's
+  !> (MORPH_ERR_EXCHANGE); an exchange that fails returns its status.
   subroutine Morph_LS_Eikonal_Error_Grid ( grid, exch, phi, band, e, status )
     type(morph_ls_grid_t),   intent(in)    :: grid
     class(morph_exchange_t), intent(inout) :: exch
@@ -501,11 +508,11 @@ contains
   !> beta > 0, those of the step. A collective. phi is assigned at the end
   !> only: when one rank refuses or an exchange fails, phi is untouched on
   !> every rank. Refused on every rank (its own message on the refusing rank,
-  !> the first refusing rank's code elsewhere): shapes that are not the grid's
-  !> (MORPH_ERR_SHAPE), an exchange that is not the grid's
-  !> (MORPH_ERR_EXCHANGE), iters < 0 or beta < 0, or iters and beta that are
-  !> not the same on every rank (MORPH_ERR_INPUT: the ranks would make
-  !> different numbers of exchanges).
+  !> the first refusing rank's code elsewhere): a grid not initialised or
+  !> shapes that are not the grid's (MORPH_ERR_SHAPE), an exchange that is
+  !> not the grid's (MORPH_ERR_EXCHANGE), iters < 0 or beta < 0, or iters
+  !> and beta that are not the same on every rank (MORPH_ERR_INPUT: the ranks
+  !> would make different numbers of exchanges).
   subroutine Morph_LS_Reinit_Grid ( grid, exch, phi, iters, beta, status )
     type(morph_ls_grid_t),   intent(in)    :: grid
     class(morph_exchange_t), intent(inout) :: exch

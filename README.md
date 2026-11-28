@@ -233,8 +233,9 @@ Measured with gfortran 13.3 on aarch64, release flags:
 
 Each of the test's 40 checks fails under at least one of 67 deliberate changes of the kernels, and 66
 of the 67 fail the test, before and after the reinitialisation's kernels were shared with the grid of
-blocks (one change had to move: the correction's gradient, taken from phi before the step, is now
-taken from phi0, which the kernel sees). The other one cannot change any result: the Godunov branch at the nodes
+blocks (one of the changes had to be re-aimed: it took the correction's gradient from phi before the
+step, which the shared kernel no longer receives, and now takes it from phi0). The other one cannot
+change any result: the Godunov branch at the nodes
 where V = 0, whose rate -V |grad phi| is a zero whose sign comes from V alone (|grad phi| >= 0).
 
 **The level-set grid of blocks** (`levelset/Morph_LS_Grid.f90`, `parallel/`, `test_morph_ls_blocks`)
@@ -332,10 +333,12 @@ rank. With every block active the reinitialisation on blocks gives the bits of t
 any blocks, any split among ranks and any number of threads. On a band, a node's value after k steps
 depends only on the nodes within L1 distance 4k (WENO-Z reads 3 nodes along each axis, the
 correction one more): the nodes farther than that from every inactive node get the bits of the whole
-grid started from the same phi. When the blocks are activated within M of the front, a node within
-2 h of the front is farther than M - 2 h from every inactive node (L1 is at least the distance), so it
-keeps those bits while 4 iters <= M/h - 2: with the band's margin of 18.5 h, up to 4 iterations, the
-default.
+grid started from the same phi. When the band has been updated to the blocks within M of the front
+just before, a node within 2 h of the front is farther than M - 2 h from every inactive node (L1 is at
+least the distance), so it keeps those bits while 4 iters <= M/h - 2: with the band's margin of
+18.5 h, up to 4 iterations, the default. These are distances, not values of phi: where |grad phi| is
+g rather than 1, a band and nodes chosen by |phi| reach M/g and 2 h/g, and the bound becomes
+4 iters <= (M/h - 2)/g.
 
 The measure sums each block in node order, then the blocks in block order with the exchange's
 ordered sum: the same bits on every rank, for any split and any number of ranks and threads, and on
@@ -350,8 +353,8 @@ In a Python emulation of these kernels on the cases of the narrow band (240 x 24
 39.9 h, 180, and of two merging circles after 36 h, 364; phi the exact distance times a factor from 1
 to 2, so that the reinitialisation has work to do), 4 and 6 iterations on the band and on the whole
 grid from the same phi: no node farther than 4 iters from the inactive nodes differed in its bits, the
-farthest that differed was at L1 distance 8 and 12, and none of the 676 to 1370 nodes within 2 h of
-the front differed; E on the band had the bits of E on every block. Built with `-ffp-contract=off`,
+farthest that differed was at L1 distance 8 and 12, and none of the 676 to 1370 nodes with
+|phi| <= 2 h differed; E on the band had the bits of E on every block. Built with `-ffp-contract=off`,
 the Fortran code gives the emulation's bits in four cases (scattered blocks of 5 with and without the
 correction, every block of 4, a checkerboard of blocks of 3), at 1 and 8 threads.
 
@@ -360,17 +363,18 @@ steps with the correction, 3 without, 0); bands (one block alone, a checkerboard
 blocks, a ring) against an oracle written in the test on the whole grid, which gives each block the
 ghosts the band reads and calls the public kernels; the reach after 2 and 4 steps; the measure against
 the oracle's sum and the whole grid; 2 to 4 simulated ranks, one of them with no active block,
-against one; the trigger below, at and above its threshold; the refusals, phi untouched; an exchange
-that fails at each of its collectives, and the number of collectives of each kind. One check has a
+against one; the trigger below, at and above its threshold; the refusals, phi untouched (a grid whose
+Init was refused among them, on one rank and on one of two); an exchange that fails at each of its
+collectives, and the number of collectives of each kind. One check has a
 single node in the band, at a corner of the grid, so that E is that node's term alone: across a
 linearly extrapolated ghost the central difference is the one-sided one in exact arithmetic, and the
 sums of the other checks absorb the rounding by which they differ. Measured with gfortran 13.3 on
-aarch64, with the release flags and with `-ffp-contract=off`: its 48 checks pass at 1 and 8 threads,
-with the same output (36 without OpenMP, the simulated ranks skipped). Each of the 48 fails under at
-least one of 125 deliberate changes of `Morph_LS_Reinit`. The test catches 81 of them (75 with a
-failed check, 4 by a crash, 2 by the time limit: ranks that do not compare their iters make
-different numbers of exchanges and wait for each other), 64 that `test_morph_ls` does not; the two
-together catch 121. The other 4 cannot change any result: each drops the setting of values that
+aarch64, with the release flags and with `-ffp-contract=off`: its 50 checks pass at 1 and 8 threads,
+with the same output (37 without OpenMP, the simulated ranks skipped). Each of the 50 fails under at
+least one of 128 deliberate changes of `Morph_LS_Reinit`. The test catches 84 of them (77 with a
+failed check, 4 by a crash, 3 by the time limit: ranks that do not compare their iters, or a rank
+that ignores the others' refusals, make different numbers of exchanges and wait for each other), 67
+that `test_morph_ls` does not; the two together catch 124. The other 4 cannot change any result: each drops the setting of values that
 nothing reads (the ghosts of the measure and of phi0 on the whole grid, whose sides are all edges;
 the ghost corners of phi0 on blocks; the distance of the subcell fix on edge nodes, which are never
 cut), and each passes the whole suite.

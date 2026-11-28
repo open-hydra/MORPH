@@ -24,7 +24,8 @@
 !>   * 2 to 4 simulated ranks, blocks of 3, 5 and 8, one rank with no active
 !>     block: the bits of one rank, E the same bits on every rank;
 !>     Morph_LS_Reinit_If_Needed_Grid below, at and above the threshold;
-!>   * refusals, phi untouched: shapes, iters < 0, beta < 0 or NaN, shape
+!>   * refusals, phi untouched: a grid whose Init was refused (on one rank
+!>     and on one of two), shapes, iters < 0, beta < 0 or NaN, shape
 !>     and iters both wrong (the shape reported), an exchange that is not
 !>     the grid's, one rank's refusal taken by every rank (two refusing: rank
 !>     0 takes the first one's code), iters, beta or a threshold that differ
@@ -133,6 +134,7 @@ program test_morph_ls_reinit_blocks
     call if_needed_ranks ()
     call refusals_ranks ()
     call two_refusals_ranks ()
+    call uninitialised_rank ()
   else
     write(*,'(A)') '   SKIP the simulated ranks: built without OpenMP'
   endif
@@ -684,12 +686,12 @@ contains
 
   subroutine refusals_one_rank ()
     type(morph_exchange_serial_t) :: ex
-    type(morph_ls_grid_t) :: g
+    type(morph_ls_grid_t) :: g, g0
     type(morph_status_t)  :: st
     real(R8), allocatable :: phi0(:,:), phi(:,:,:), keep(:,:,:), bad(:,:,:)
     real(R8)    :: e
     integer(I4) :: b, k, shp(3,3)
-    logical     :: done, okr, oke
+    logical     :: done, okr, oke, okn
 
     phi0 = field ( 25, 25 )
     call Morph_LS_Grid_Init ( g, 5, [5,5], H, [ (0, b = 1, 25) ], ex, st )
@@ -744,6 +746,20 @@ contains
     call Morph_LS_Reinit_Grid ( g, ex, phi, 4, BETA, st )
     call check ( st%code == MORPH_ERR_EXCHANGE .and. same3( phi, keep ), &
                  'reinitialisation with an exchange of another rank: refused, phi untouched' )
+
+    ! a grid whose Init was refused (2 nodes per block side): refused before
+    ! any size of its arrays is taken
+    call Morph_LS_Grid_Init ( g0, 2, [3,3], H, [ (0, b = 1, 9) ], ex, st )
+    okn = .not. st%ok()
+    e = 1.0_R8
+    call Morph_LS_Eikonal_Error_Grid ( g0, ex, phi, BAND, e, st )
+    okn = okn .and. st%code == MORPH_ERR_SHAPE .and. index(st%message, 'not initialised') > 0 .and. same1( e, 0.0_R8 )
+    call Morph_LS_Reinit_Grid ( g0, ex, phi, 4, BETA, st )
+    okn = okn .and. st%code == MORPH_ERR_SHAPE .and. index(st%message, 'not initialised') > 0 .and. same3( phi, keep )
+    call Morph_LS_Reinit_If_Needed_Grid ( g0, ex, phi, BAND, 0.0_R8, 4, BETA, done, e, st )
+    call check ( okn .and. st%code == MORPH_ERR_SHAPE .and. index(st%message, 'not initialised') > 0 .and. &
+                 .not. done .and. same3( phi, keep ), &
+                 'a grid whose Init was refused: E, the reinitialisation and if needed refuse it, phi untouched' )
   end subroutine refusals_one_rank
 
 
@@ -1064,5 +1080,57 @@ contains
                  codes(2) == MORPH_ERR_INPUT .and. all( msgs ) .and. all( kept ), &
                  '3 ranks, rank 1 gives a phi too small, rank 2 iters = -1: each its own refusal, rank 0 rank 1''s' )
   end subroutine two_refusals_ranks
+
+
+  !> 2 simulated ranks, the Init of rank 1 refused (2 nodes per block side):
+  !> rank 1 refuses as not initialised, rank 0 with its code; phi untouched.
+  subroutine uninitialised_rank ()
+    type(morph_sim_world_t), target :: world
+    type(morph_status_t)  :: st
+    real(R8), allocatable :: phi0(:,:)
+    logical,  allocatable :: act(:)
+    integer(I4) :: codes(0:1)
+    logical     :: msgs(0:1), kept(0:1), inits(0:1)
+
+    phi0 = field ( 40, 35 )
+    act  = pattern ( 6, 5, [8,7] )
+    codes = -1
+    msgs  = .false.
+    kept  = .false.
+    inits = .false.
+    call world%init ( 2, st )
+    !$omp parallel num_threads(2)
+    block
+      type(morph_exchange_sim_t) :: ex
+      type(morph_ls_grid_t) :: g
+      type(morph_status_t)  :: s
+      real(R8), allocatable :: phi(:,:,:), keep(:,:,:)
+      integer(I4) :: t
+      t = 0
+      !$ t = omp_get_thread_num()
+      ex%me = t
+      ex%world => world
+      call Morph_LS_Grid_Init ( g, merge(2, 5, t == 1), [8,7], H, owners(2, 56, 1), ex, s, act )
+      inits(t) = s%ok() .neqv. ( t == 1 )
+      if ( t == 1 ) then
+        allocate( phi(5,5,3) )
+        phi = 1.0_R8
+      else
+        phi = slots_of ( g, phi0 )
+      endif
+      keep = phi
+      call Morph_LS_Reinit_Grid ( g, ex, phi, 4, BETA, s )
+      codes(t) = s%code
+      kept(t)  = same3( phi, keep )
+      if ( t == 1 ) then
+        msgs(t) = index(s%message, 'not initialised') > 0
+      else
+        msgs(t) = index(s%message, 'refused on rank 1') > 0
+      endif
+    end block
+    !$omp end parallel
+    call check ( st%ok() .and. all( inits ) .and. all( codes == MORPH_ERR_SHAPE ) .and. all( msgs ) .and. &
+                 all( kept ), '2 ranks, the Init of rank 1 refused: both refuse (not initialised there), phi untouched' )
+  end subroutine uninitialised_rank
 
 end program test_morph_ls_reinit_blocks
